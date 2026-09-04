@@ -1,0 +1,64 @@
+name: Patch V1.13
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Corrigir status do lançamento e atualizar versão
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+
+          old = 'status:(status.value==="pendente"?"pendente":"pago")'
+          new = 'status:(document.getElementById("status").value==="pendente"?"pendente":"pago")'
+          if old not in s:
+              raise SystemExit('Trecho esperado do status não encontrado; nenhuma alteração aplicada.')
+          s = s.replace(old, new, 1)
+
+          s = s.replace('V1.12', 'V1.13')
+          p.write_text(s, encoding='utf-8')
+
+          sw = Path('sw.js')
+          sws = sw.read_text(encoding='utf-8')
+          sws = sws.replace('financeiro-v1.12', 'financeiro-v1.13')
+          sw.write_text(sws, encoding='utf-8')
+          PY
+
+      - name: Validar alteração
+        run: |
+          grep -q 'status:(document.getElementById("status").value==="pendente"?"pendente":"pago")' index.html
+          grep -q 'financeiro-v1.13' sw.js
+          grep -q 'V1.13' index.html
+
+      - name: Commit da correção
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html sw.js
+          if git diff --cached --quiet; then
+            echo 'Nenhuma alteração necessária.'
+            exit 0
+          fi
+          git commit -m 'Corrige status pendente no lançamento - V1.13'
+          git push
+
+      - name: Remover workflow temporário
+        if: success()
+        run: |
+          git rm .github/workflows/patch-v113.yml
+          git commit -m 'Remove workflow temporário da V1.13'
+          git push
