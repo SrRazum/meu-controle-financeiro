@@ -1,144 +1,110 @@
-// Correção de inicialização e sincronização do Meu Controle Financeiro.
-// Mantém o estado de restauração separado do estado de desbloqueio local.
+// Correção de compatibilidade para inicialização e sincronização.
+//
+// IMPORTANTE: o fluxo de restauração da nuvem já é implementado por
+// initializeSecurity() no index.html. Este arquivo NÃO deve interceptar o
+// submit de unlockForm, pois isso impede que o estado lexical "unlocked"
+// seja atualizado e causa o ciclo Restaurar -> Criar proteção -> Restaurar.
+//
+// Também evitamos chamadas assíncronas do Supabase dentro de
+// onAuthStateChange(). O Supabase recomenda que o callback de autenticação
+// não faça chamadas assíncronas adicionais, pois isso pode causar deadlock.
 (function(){
-  function isRestoreMode(){
-    return window.__restoreFromCloud === true || window.__securityMode === 'restore';
-  }
-
-  function isAppUnlocked(){
-    const screen=document.getElementById('lockScreen');
-    return !!screen && screen.classList.contains('hidden');
-  }
-
-  function syncUnlockedFlag(){
-    try{ window.unlocked=isAppUnlocked(); }catch(err){}
-  }
-
-  function forceProtectionScreen(){
-    // Durante a restauração da nuvem, NÃO podemos chamar showLock('setup') ou
-    // initializeSecurity(): isso substitui "Restaurar dados" por "Criar proteção"
-    // e inicia novamente o loop.
-    if(isRestoreMode()) return;
+  function patchRefreshSyncUI(){
     try{
-      syncUnlockedFlag();
-      const secure=!!localStorage.getItem('controle_financeiro_secure_v1');
-      if(typeof window.showLock==='function') window.showLock(secure?'unlock':'setup');
-      else document.getElementById('lockScreen')?.classList.remove('hidden');
-      window.unlocked=false;
-    }catch(err){ console.warn('Falha ao abrir proteção:',err); }
-  }
+      if(typeof window.refreshSyncUI !== 'function' || window.__refreshSyncUIPatched) return;
+      window.__refreshSyncUIPatched = true;
 
-  function patchRestoreForm(){
-    const form=document.getElementById('unlockForm');
-    if(!form || form.__restoreHandlerInstalled) return;
+      window.refreshSyncUI = function(){
+        const logged=document.getElementById('syncLogged');
+        const intro=document.getElementById('syncIntro');
+        const user=document.getElementById('syncUser');
+        if(!logged) return;
 
-    // Captura o submit antes do onsubmit criado por initializeSecurity().
-    // Assim, quando a tela estiver em modo restore, o handler de criação de
-    // proteção nunca poderá sobrescrever o fluxo.
-    form.addEventListener('submit', async function(event){
-      if(!isRestoreMode()) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-
-      const password=(document.getElementById('unlockPassword')?.value || '');
-      const msg=document.getElementById('lockMsg');
-      if(!password){
-        if(msg) msg.textContent='Informe a senha de proteção usada nos dados da nuvem.';
-        return;
-      }
-
-      const recoverInput=document.getElementById('syncRecoverPassword');
-      if(recoverInput) recoverInput.value=password;
-
-      if(typeof window.recoverCloudVault!=='function'){
-        if(msg) msg.textContent='A rotina de restauração ainda não foi carregada. Atualize a página e tente novamente.';
-        return;
-      }
-
-      if(msg) msg.textContent='Descriptografando e restaurando os dados da nuvem...';
-      try{
-        const result=await window.recoverCloudVault();
-        // A rotina de recuperação é a responsável por criar/restaurar o cofre
-        // local. Só saímos do modo restore depois que ela terminar sem erro.
-        if(result !== false){
-          window.__restoreFromCloud=false;
-          window.__securityMode=null;
-          syncUnlockedFlag();
+        // NÃO chamar auth.getUser() aqui. Esta função também é chamada pelo
+        // callback de onAuthStateChange e uma chamada Supabase dentro desse
+        // callback pode bloquear a fila interna de autenticação.
+        const ready=!!window.__syncReady;
+        if(ready){
+          logged.style.display='block';
+          const email=(document.getElementById('syncEmail')?.value || '').trim();
+          if(user) user.textContent='Conta conectada'+(email?': '+email:'');
+          if(intro) intro.textContent='Sua conta está conectada. Os lançamentos podem ser sincronizados entre seus dispositivos.';
+        }else{
+          logged.style.display='none';
+          if(intro) intro.textContent='Entre com sua conta para usar os mesmos lançamentos no celular e no computador.';
         }
-      }catch(err){
-        console.error('Erro ao restaurar dados da nuvem:',err);
-        if(msg) msg.textContent=err?.message || 'Não foi possível restaurar os dados da nuvem.';
-      }
-    }, true);
-
-    form.__restoreHandlerInstalled=true;
-  }
-
-  function patchSync(){
-    try{
-      if(typeof window.syncNow!=='function' || window.__syncNowPatched) return;
-      const original=window.syncNow;
-      window.syncNow=async function(manual){
-        syncUnlockedFlag();
-        if(manual && !window.unlocked){
-          // Em modo restore, a ação correta é a restauração pelo formulário;
-          // nunca redirecionar para a criação de uma nova proteção.
-          if(isRestoreMode()) return;
-          const msg=document.getElementById('syncMsg');
-          if(msg) msg.textContent='Desbloqueie o aplicativo para concluir a sincronização.';
-          forceProtectionScreen();
-          return;
-        }
-        return original.apply(this,arguments);
       };
-      window.__syncNowPatched=true;
-    }catch(err){ console.warn('Patch de sincronização:',err); }
+    }catch(err){ console.warn('Patch refreshSyncUI:',err); }
   }
 
-  function patchLockState(){
-    syncUnlockedFlag();
-    const screen=document.getElementById('lockScreen');
-    if(screen && !screen.__unlockObserver){
-      const observer=new MutationObserver(function(){
-        syncUnlockedFlag();
-        patchRestoreForm();
-      });
-      observer.observe(screen,{attributes:true,attributeFilter:['class']});
-      screen.__unlockObserver=true;
-    }
-  }
-
-  function boot(){
+  function patchCloudRestoreCheck(){
     try{
-      const form=document.getElementById('unlockForm');
-      const cloudBtn=document.getElementById('lockCloudBtn');
-      if(form){
-        patchRestoreForm();
+      if(typeof window.maybeOfferCloudRestore !== 'function' || window.__cloudRestoreCheckPatched) return;
+      window.__cloudRestoreCheckPatched=true;
+      const original=window.maybeOfferCloudRestore;
 
-        // A inicialização normal só pode ocorrer quando não estamos restaurando.
-        // Se o usuário acabou de autenticar na nuvem, nunca recrie a proteção.
-        if(!isRestoreMode() && typeof window.initializeSecurity==='function' && typeof form.onsubmit!=='function'){
-          window.initializeSecurity().catch(function(err){ console.warn('Falha ao inicializar proteção:',err); });
-        }
-        if(cloudBtn){
-          cloudBtn.style.display='block';
-          cloudBtn.style.visibility='visible';
-          cloudBtn.hidden=false;
-        }
-      }
-      patchLockState();
-      patchSync();
-    }catch(err){ console.warn('Boot de recuperação:',err); }
+      // Quando chamado pelo callback de autenticação, adia a consulta ao banco
+      // para o próximo ciclo do event loop. Assim o callback do Supabase termina
+      // antes de qualquer chamada de banco/autenticação adicional.
+      window.maybeOfferCloudRestore=function(){
+        return new Promise(resolve=>{
+          setTimeout(()=>{
+            Promise.resolve(original.apply(this,arguments))
+              .then(resolve)
+              .catch(()=>resolve(false));
+          },0);
+        });
+      };
+    }catch(err){ console.warn('Patch restauração da nuvem:',err); }
   }
 
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot,{once:true});
-  else boot();
-  setTimeout(boot,300);
-  setTimeout(boot,800);
-  setTimeout(boot,1500);
-  setTimeout(boot,2500);
-  setInterval(function(){
-    patchRestoreForm();
-    patchSync();
-  },500);
+  function patchSyncNow(){
+    try{
+      if(typeof window.syncNow !== 'function' || window.__syncNowPatched) return;
+      window.__syncNowPatched=true;
+      const original=window.syncNow;
+
+      // O callback de autenticação pode chamar syncNow(). Adiar TODAS as
+      // execuções é seguro porque syncNow já é assíncrona e os chamadores
+      // continuam podendo fazer await normalmente.
+      window.syncNow=function(){
+        const args=arguments;
+        return new Promise((resolve,reject)=>{
+          setTimeout(()=>{
+            Promise.resolve(original.apply(this,args)).then(resolve,reject);
+          },0);
+        });
+      };
+    }catch(err){ console.warn('Patch syncNow:',err); }
+  }
+
+  function removeLegacyRestoreInterception(){
+    // Versões anteriores deste boot-fix instalavam um listener de submit em
+    // unlockForm e chamavam recoverCloudVault() enquanto o aplicativo ainda
+    // estava bloqueado. recoverCloudVault() exige unlocked=true, portanto esse
+    // listener criava o loop observado pelo usuário.
+    //
+    // Não instalamos nenhum listener aqui. O handler oficial de
+    // initializeSecurity() deve controlar setup, unlock e restore.
+  }
+
+  function patch(){
+    patchRefreshSyncUI();
+    patchCloudRestoreCheck();
+    patchSyncNow();
+    removeLegacyRestoreInterception();
+  }
+
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',patch,{once:true});
+  }else{
+    patch();
+  }
+
+  // As funções do index.html são declaradas antes deste arquivo, mas os
+  // navegadores/Service Worker podem alterar a ordem de inicialização. Tente
+  // novamente algumas vezes sem instalar listeners concorrentes.
+  setTimeout(patch,100);
+  setTimeout(patch,500);
+  setTimeout(patch,1000);
 })();
