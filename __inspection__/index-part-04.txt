@@ -1,0 +1,218 @@
+t.innerHTML=(activeData().filter(x=>x.status==="pendente"&&x.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))).map(d=>`<div class="card" style="margin-bottom:8px"><div class="actions"><strong>${d.descricao}</strong><span class="status ${statusClass(d)}">${statusText(d)}</span><span style="margin-left:auto">${brl(d.valor)}</span></div><div class="label">Vencimento: ${fmtDate(d.vencimento)} · ${d.controle} · ${d.categoria}</div><div class="actions" style="margin-top:8px"><button class="success" onclick="pay('${d.id}')">☑ Marcar como pago</button></div></div>`).join("")||'<div class="empty">Nenhum vencimento pendente.</div>';
+ loadPrefs();
+}
+function dueRow(d){let n=daysUntil(d.vencimento);let txt=n<0?`vencida há ${Math.abs(n)} dia(s)`:n===0?"vence hoje":`vence em ${n} dia(s)`;return `<div style="padding:9px 0;border-bottom:1px solid var(--line)"><strong>${d.descricao}</strong> — ${brl(d.valor)} · ${fmtDate(d.vencimento)} <span class="label">(${txt})</span></div>`}
+async function pay(id){let x=activeData().find(x=>x.id===id);if(x){x.status="pago";stampRecord(x);await save();render()}}
+function editItem(id){
+ let x=activeData().find(y=>y.id===id); if(!x)return;
+ document.getElementById("editId").value=x.id;
+ document.getElementById("eTipo").value=x.tipo;
+ document.getElementById("eControle").value=x.controle;
+ document.getElementById("eDescricao").value=x.descricao;
+ updateEditCats(x.categoria);
+ document.getElementById("eValor").value=x.valor;
+ document.getElementById("eData").value=x.data;
+ document.getElementById("eVencimento").value=x.vencimento||"";
+ document.getElementById("eForma").value=x.forma||"Outro";
+ updateEditStatus(x.status);
+ document.getElementById("editModal").classList.add("show");
+}
+function updateEditCats(selected){let el=document.getElementById("eCategoria");el.innerHTML=cats[document.getElementById("eTipo").value].map(x=>`<option>${x}</option>`).join("");if(selected)el.value=selected}
+function updateEditStatus(selected){
+ let s=document.getElementById("eStatus"), entrada=document.getElementById("eTipo").value==="entrada";
+ s.innerHTML=entrada?'<option value="pago">Recebido</option><option value="pendente">Pendente</option>':'<option value="pago">Pago</option><option value="pendente">Pendente</option>';
+ s.value=selected||"pago";
+}
+document.getElementById("eTipo")?.addEventListener("change",()=>{updateEditCats();updateEditStatus(document.getElementById("eStatus").value)});
+function closeEdit(){document.getElementById("editModal").classList.remove("show")}
+async function delItem(id){
+ if(!confirm("Excluir este lançamento permanentemente?"))return;
+ let existed=false;
+ const kept=[];
+ for(const x of data){
+   if(x&&x.id===id){if(!x.deleted)existed=true;continue}
+   kept.push(x);
+ }
+ data=kept;
+ if(existed)data.push({id:id,deleted:true,deletedAt:new Date().toISOString()});
+ await save();render();
+}
+document.getElementById("eTipo")?.addEventListener("change",()=>updateEditCats());
+function loadPrefs(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3":true,"1":true,"0":true,"over":true}');n7.checked=p["7"];n3.checked=p["3"];n1.checked=p["1"];n0.checked=p["0"];nover.checked=p.over}
+["n7","n3","n1","n0","nover"].forEach(id=>document.getElementById(id).onchange=()=>{localStorage.setItem(PREF,JSON.stringify({"7":n7.checked,"3":n3.checked,"1":n1.checked,"0":n0.checked,over:nover.checked}));});
+document.getElementById("editForm").onsubmit=async e=>{
+ e.preventDefault();
+ let x=activeData().find(y=>y.id===document.getElementById("editId").value); if(!x)return;
+ x.tipo=eTipo.value;x.controle=eControle.value;x.descricao=eDescricao.value;x.categoria=eCategoria.value;
+ x.valor=Number(eValor.value);x.data=eData.value;x.vencimento=eVencimento.value||eData.value;x.forma=eForma.value;x.status=eStatus.value;
+ stampRecord(x);
+ await save();closeEdit();render();alert("Alterações salvas com sucesso.");
+};
+function notifications(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3":true,"1":true,"0":true,"over":true}'), msgs=[];activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{let n=daysUntil(x.vencimento);if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over))msgs.push(`${x.descricao}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`)});if(msgs.length&&"Notification"in window&&Notification.permission==="granted")new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\n")});}
+if("Notification"in window&&Notification.permission==="default")Notification.requestPermission().catch(()=>{});
+initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.12"; queueSync();});
+</script>
+<script>
+
+/* Cloud synchronization — V1.11 */
+let __supabase=null;
+let __syncReady=false;
+let __syncBusy=false;
+let __cloudMismatch=false;
+
+function syncConfigured(){
+ return !!(window.SUPABASE_URL && window.SUPABASE_PUBLISHABLE_KEY &&
+   !window.SUPABASE_URL.includes("COLOQUE") && !window.SUPABASE_PUBLISHABLE_KEY.includes("COLOQUE"));
+}
+function setSyncState(state){
+ const d=document.getElementById("syncDot"); if(!d)return;
+ d.className="sync-dot "+(state||"");
+}
+function openSyncModal(){
+ document.getElementById("syncModal").classList.add("show");
+ const msg=document.getElementById("syncMsg");
+ msg.textContent=syncConfigured()?"":"A sincronização ainda precisa ser configurada no arquivo config.js.";
+ refreshSyncUI();
+}
+function closeSyncModal(){document.getElementById("syncModal").classList.remove("show")}
+function setRecoverVisible(v){
+ const el=document.getElementById("syncRecover");
+ if(el)el.style.display=v?"block":"none";
+}
+function syncErrorText(e){
+ const m=e&&e.message?String(e.message):"";
+ return m||"Verifique a configuração e a conexão.";
+}
+function refreshSyncUI(){
+ const logged=document.getElementById("syncLogged");
+ if(!__supabase){logged.style.display="none";return}
+ __supabase.auth.getUser().then(({data:res})=>{
+   const user=res&&res.user;
+   setRecoverVisible(!!user&&unlocked&&__cloudMismatch);
+   if(user){
+     logged.style.display="block";
+     document.getElementById("syncUser").textContent="Conta conectada: "+user.email;
+     document.getElementById("syncIntro").textContent="Sua conta está conectada. Os lançamentos podem ser sincronizados entre seus dispositivos.";
+   }else{
+     logged.style.display="none";
+     document.getElementById("syncIntro").textContent="Entre com sua conta para usar os mesmos lançamentos no celular e no computador.";
+   }
+ })
+}
+
+/* Leitura do cofre da conta atual. Nao escreve nada. */
+async function cloudVaultRow(columns){
+ const {data:res,error:userErr}=await __supabase.auth.getUser();
+ const user=res&&res.user;
+ if(userErr||!user)throw new Error("Sessão inválida");
+ const {data:row,error}=await __supabase.from("finance_vault").select(columns||"payload,updated_at").eq("user_id",user.id).maybeSingle();
+ if(error)throw error;
+ return {user:user,row:row||null};
+}
+async function cloudFetchVault(){
+ if(!__supabase||!__syncReady)throw new Error("Sem sessão");
+ const {row}=await cloudVaultRow("payload");
+ return row?row.payload:null;
+}
+/* A conta ja tem cofre mas este navegador ainda nao: a tela de bloqueio pede
+   a senha de protecao existente em vez de oferecer "Criar proteção". */
+async function maybeOfferCloudRestore(){
+ if(unlocked)return false;
+ if(localStorage.getItem(SECURE_KEY))return false;
+ if(!__supabase||!__syncReady)return false;
+ try{
+   const {row}=await cloudVaultRow("user_id,updated_at");
+   if(!row)return false;
+   setSecurityMode("restore");
+   return true;
+ }catch(e){return false}
+}
+/* Une o conteudo remoto ja descriptografado ao local e regrava o cofre
+   sempre com a senha de protecao ativa neste dispositivo. */
+async function pushMerged(user,remoteValue){
+ const merged=mergeRecords(Array.isArray(data)?data:[],Array.isArray(remoteValue)?remoteValue:[]);
+ data=merged;
+ const payload=await encryptData(window.__financePassword,data);
+ const {error}=await __supabase.from("finance_vault").upsert({user_id:user.id,payload},{onConflict:"user_id"});
+ if(error)throw error;
+ await secureSave();
+ render();
+}
+async function initCloud(){
+ if(!syncConfigured()){setSyncState("err");return}
+ try{
+   __supabase=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_PUBLISHABLE_KEY,{
+     auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}
+   });
+   const {data:{session}}=await __supabase.auth.getSession();
+   __syncReady=!!session;
+   setSyncState(session?"ok":"");
+   __supabase.auth.onAuthStateChange((_event,newSession)=>{
+     __syncReady=!!newSession;setSyncState(newSession?"ok":"");
+     if(!newSession){__cloudMismatch=false;setRecoverVisible(false)}
+     refreshSyncUI();
+     if(!newSession)return;
+     if(unlocked)syncNow(false);
+     else maybeOfferCloudRestore();
+   });
+   refreshSyncUI();
+   if(session){
+     if(unlocked) await syncNow(false);
+     else await maybeOfferCloudRestore();
+   }
+ }catch(e){console.warn("Falha ao iniciar sincronização",e);setSyncState("err")}
+}
+async function syncLogin(){
+ if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
+ const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
+ const msg=document.getElementById("syncMsg");msg.textContent="";
+ if(!email||!password){msg.textContent="Informe e-mail e senha.";return}
+ setSyncState("busy");
+ const {error}=await __supabase.auth.signInWithPassword({email,password});
+ if(error){setSyncState("err");msg.textContent="Não foi possível entrar. Verifique os dados da conta.";return}
+ setSyncState("ok");
+ document.getElementById("syncPassword").value="";
+ if(!unlocked){
+   const offered=await maybeOfferCloudRestore();
+   msg.textContent=offered
+     ?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos."
+     :"Conta conectada. Desbloqueie o aplicativo para sincronizar.";
+   refreshSyncUI();
+   if(offered)closeSyncModal();
+   return;
+ }
+ msg.textContent="Conta conectada. Sincronizando...";
+ await syncNow(true);refreshSyncUI();
+}
+async function syncSignup(){
+ if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
+ const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
+ const msg=document.getElementById("syncMsg");msg.textContent="";
+ if(!email||password.length<6){msg.textContent="Informe um e-mail e uma senha com pelo menos 6 caracteres.";return}
+ setSyncState("busy");
+ const {data,error}=await __supabase.auth.signUp({email,password});
+ if(error){setSyncState("err");msg.textContent="Não foi possível criar a conta. Verifique os dados.";return}
+ setSyncState("ok");
+ document.getElementById("syncPassword").value="";
+ msg.textContent=data.session?"Conta criada. Sincronizando...":"Conta criada. Verifique o e-mail de confirmação e depois entre no aplicativo.";
+ if(data.session){
+   if(unlocked) await syncNow(true);
+   else await maybeOfferCloudRestore();
+ }
+ refreshSyncUI();
+}
+async function syncLogout(){
+ if(!__supabase)return;
+ await __supabase.auth.signOut();__syncReady=false;__cloudMismatch=false;setRecoverVisible(false);setSyncState("");refreshSyncUI();
+}
+async function syncNow(manual=false){
+ const msg=document.getElementById("syncMsg");
+ if(!syncConfigured()){if(manual&&msg)msg.textContent="A sincronização ainda precisa ser configurada no arquivo config.js.";return}
+ if(!__supabase||!__syncReady){if(manual&&msg)msg.textContent="Entre na sua conta para sincronizar.";return}
+ if(!unlocked){if(manual&&msg)msg.textContent="Desbloqueie o aplicativo com a senha de proteção antes de sincronizar.";return}
+ if(__syncBusy)return;
+ __syncBusy=true;setSyncState("busy");
+ try{
+   const {user,row}=await cloudVaultRow("payload,updated_at");
+   /* Primeiro dispositivo da conta: envia o que ja existe aqui. */
+   if(!r
