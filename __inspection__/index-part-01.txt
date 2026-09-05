@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meu Controle Financeiro</title>
+<style>
+:root{--bg:#f8f1e8;--card:#fffdf9;--text:#33251f;--muted:#76685f;--line:#ead9ca;--primary:#d85a2b;--green:#168447;--red:#b83a32;--orange:#c77a22}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+header{background:#4a211d;color:#fff;padding:18px 22px;position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:21px}.wrap{max-width:1150px;margin:auto;padding:18px}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}button,.btn{border:0;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:600;background:#efe2d6;color:#4a211d}
+nav button.active{background:var(--primary);color:#fff}.primary{background:var(--primary);color:#fff}.danger{background:#fee2e2;color:#991b1b}.success{background:#dcfce7;color:#166534}
+.view{display:none}.view.active{display:block}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 1px 2px #00000008}.label{color:var(--muted);font-size:13px}.value{font-size:23px;font-weight:700;margin-top:6px}.green{color:var(--green)}.red{color:var(--red)}.orange{color:var(--orange)}
+.section{margin-top:18px}.section h2{font-size:17px;margin:0 0 10px}.table-wrap{overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px;border-bottom:1px solid var(--line);font-size:14px}th{background:#f9fafb}.empty{padding:20px;color:var(--muted)}
+form{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}.full{grid-column:1/-1}label{font-size:13px;font-weight:600}input,select{width:100%;margin-top:5px;padding:10px;border:1px solid #d1d5db;border-radius:8px;background:#fff;font-size:14px}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.status{padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700;display:inline-block}.paid{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}.overdue{background:#fee2e2;color:#991b1b}.filter{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}.filter>*{min-width:150px}
+.notice{padding:12px;border-radius:10px;background:#fff4e8;border:1px solid #f0c9a8;margin-bottom:14px;font-size:14px}
+@media(max-width:800px){.grid{grid-template-columns:repeat(2,1fr)}form{grid-template-columns:1fr}.full{grid-column:auto}th,td{white-space:nowrap}}
+@media(max-width:480px){.grid{grid-template-columns:1fr}}
+.modal{display:none;position:fixed;inset:0;background:#0008;align-items:center;justify-content:center;padding:18px;z-index:20}.modal.show{display:flex}.modal-box{background:#fff;border-radius:14px;padding:20px;max-width:720px;width:100%;max-height:92vh;overflow:auto}.small{font-size:12px;color:var(--muted)}.btn-edit{background:#dbeafe;color:#1d4ed8}.btn-delete{background:#fee2e2;color:#991b1b}.btn-pay{background:#dcfce7;color:#166534}
+
+.home-section-title{margin:20px 0 10px;font-size:15px;font-weight:800;letter-spacing:.2px}
+.home-section{border:1px solid var(--line);border-radius:14px;padding:14px;background:#fffaf5;margin-bottom:14px}
+.home-section .grid{grid-template-columns:repeat(5,1fr)}
+@media(max-width:1000px){.home-section .grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:600px){.home-section .grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:420px){.home-section .grid{grid-template-columns:1fr}}
+
+.topbar{padding:0;display:flex;align-items:center}.brand{display:flex;align-items:center;gap:12px}.brand img{width:52px;height:52px;object-fit:contain;border-radius:50%;background:#fff}.brand h1{margin:0;font-size:21px}.subtitle{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;opacity:.82;margin-top:3px}
+.home-section-title{font-size:16px}.home-section{overflow:hidden}
+#cards{display:block}.mobile-new{display:none}
+@media(max-width:700px){
+ body{padding-bottom:76px}
+ header{padding:10px 14px;position:sticky;top:0}
+ .wrap{padding:14px}
+ .brand img{width:44px;height:44px}.brand h1{font-size:18px}.subtitle{font-size:9px;letter-spacing:1px}
+ nav{position:fixed;left:0;right:0;bottom:0;margin:0;padding:8px 5px 7px;background:#fff;border-top:1px solid var(--line);z-index:15;display:grid;grid-template-columns:repeat(5,1fr);gap:3px;box-shadow:0 -3px 12px #00000012}
+ nav button{padding:8px 2px;font-size:10px;border-radius:8px;background:transparent;color:#4b5563}
+ nav button.active{background:transparent;color:var(--primary)}
+ .home-section{padding:10px;border-radius:12px;margin-bottom:12px}
+ .home-section-title{font-size:14px;margin:5px 4px 9px}
+ .home-section .grid{grid-template-columns:repeat(2,1fr);gap:8px}
+ .home-section .card{padding:11px;border-radius:11px}
+ .home-section .value{font-size:18px}
+ .home-section .label{font-size:11px}
+ .home-section .card:first-child{grid-column:1/-1}
+ .mobile-new{display:block;width:100%;margin-top:8px;font-size:13px;padding:11px;border-radius:10px}
+ .grid{grid-template-columns:1fr 1fr;gap:8px}
+ .card{padding:13px}
+ .value{font-size:19px}
+ form{grid-template-columns:1fr}
+ .full{grid-column:auto}
+ .filter{display:grid;grid-template-columns:1fr 1fr}
+ .filter>*{min-width:0}
+ .table-wrap{font-size:12px}
+ th,td{padding:8px}
+ .actions button{font-size:11px;padding:8px 9px}
+ .modal-box{padding:15px}
+}
+@media(max-width:420px){
+ .filter{grid-template-columns:1fr}
+ .home-section .grid{grid-template-columns:1fr 1fr}
+ .home-section .card:first-child{grid-column:1/-1}
+}
+
+#lockScreen{position:fixed;inset:0;background:#f5f6f8;z-index:100;display:flex;align-items:center;justify-content:center;padding:18px}
+#lockScreen.hidden{display:none}
+.lock-box{width:min(430px,100%);background:#fff;border:1px solid var(--line);border-radius:18px;padding:26px;box-shadow:0 12px 40px #00000018;text-align:center}
+.lock-logo{width:78px;height:78px;object-fit:contain;border-radius:50%;margin-bottom:10px}
+.lock-box h2{margin:4px 0 6px;color:#8f1d24}.lock-box p{color:var(--muted);font-size:14px;line-height:1.45;margin:0 0 18px}
+.lock-box input{margin-bottom:10px}.lock-msg{min-height:20px;font-size:13px;color:#991b1b;margin:4px 0 10px}
+.security-badge{font-size:11px;color:#166534;background:#dcfce7;border-radius:999px;padding:5px 9px;display:inline-block;margin-bottom:15px}
+.lock-btn{background:transparent;color:#fff;border:1px solid #ffffff44;padding:7px 10px;font-size:12px}
+.topbar{justify-content:space-between}
+@media(max-width:700px){.lock-box{padding:22px}.lock-logo{width:68px;height:68px}}
+</style>
+
+
+<meta name="theme-color" content="#ef4b23">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Meu Controle Financeiro">
+<link rel="manifest" href="manifest.json">
+
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.sync-btn{background:transparent;color:#fff;border:1px solid #ffffff44;padding:7px 10px;font-size:12px}
+.sync-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#9ca3af;margin-right:5px}
+.sync-dot.ok{background:#22c55e}.sync-dot.err{background:#ef4444}.sync-dot.busy{background:#f59e0b}
+#syncModal{position:fixed;inset:0;background:#0008;z-index:110;display:none;align-items:center;justify-content:center;padding:18px}
+#syncModal.show{display:flex}.sync-box{width:min(440px,100%);background:#fff;border-radius:16px;padding:22px;box-shadow:0 18px 60px #0004}
+.sync-box h3{margin:0 0 8px}.sync-box p{font-size:13px;color:var(--muted);line-height:1.45}
+.sync-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.sync-actions button{flex:1;min-width:120px}
+#syncMsg{min-height:20px;font-size:13px;color:#991b1b;margin:8px 0}
+</style>
+
+<style>
+:root{--burgundy:#4a211d;--cream:#f8f1e8;--peach:#fff4e8}
+body{background:var(--cream)}
+header{box-shadow:0 2px 10px #4a211d18}
+.home-section{border-color:#ead2bf;background:#fffaf5}
+.home-section-title{color:#6d2b22}
+.home-section .card{background:#fffdf9;border-color:#ead9ca}
+nav button{background:#efe2d6;color:#5b342c}
+nav button.active{background:#d85a2b;color:#fff}
+.primary{background:#d85a2b;color:#fff}
+.notice{color:#4d352d}
+.table-wrap{border-color:#ead9ca}
+th{background:#fbefe5}
+.lock-box{border-color:#ead9ca}
+.lock-box h2{color:#8f2f25}
+</style>
+</head>
+<body>
+
+<div id="lockScreen">
+  <div class="lock-box">
+    <img class="lock-logo" src="logo.png" alt="Logo Sabores do Recôncavo">
+    <div class="security-badge">🔒 Dados protegidos por criptografia</div>
+    <h2 id="lockTitle">Meu Controle Financeiro</h2>
+    <p id="lockDescription">Crie uma senha para proteger os dados registrados neste aplicativo.</p>
+    <form id="unlockForm">
+      <input id="unlockPassword" type="password" autocomplete="current-password" placeholder="Senha" minlength="6" required>
+      <input id="unlockPassword2" type="password" autocomplete="new-password" placeholder="Confirme a senha" minlength="6" style="display:none">
+      <div id="lockMsg" class="lock-msg"></div>
+      <button class="primary" style="width:100%;padding:12px" type="submit" id="unlockButton">Criar proteção</button>
+    </form>
+    <button id="lockCloudBtn" type="button" style="width:100%;padding:11px;margin-top:8px;display:none" onclick="openSyncModal()">☁️ Já tenho dados na nuvem — entrar na conta</button>
+    <div class="small" style="margin-top:12px">A senha não é armazenada. Se esquecê-la, os dados criptografados não poderão ser recuperados.</div>
+  </div>
+</div>
+
+<div id="syncModal">
+<div class="sync-box">
+<h3>☁️ Sincronização</h3>
+<p id="syncIntro">Entre com sua conta para usar os mesmos lançamentos no celular e no computador.</p>
+<input id="syncEmail" type="email" placeholder="E-mail" autocomplete="email">
+<input id="syncPassword" type="password" placeholder="Senha da conta" autocomplete="current-password">
+<div id="syncMsg"></div>
+<div class="sync-actions">
+<button class="primary" onclick="syncLogin()">Entrar</button>
+<button class="success" onclick="syncSignup()">Criar conta</button>
+<button onclick="closeSyncModal()">Fechar</button>
+</div>
+<div id="syncLogged" style="display:none">
+<hr>
+<div class="small" id="syncUser"></div>
+<div class="sync-actions">
+<button class="primary" onclick="syncNow(true)">☁️ Sincronizar agora</button>
+<button onclick="syncLogout()">Sair da conta</button>
+</div>
+</div>
+<div id="syncRecover" style="display:none">
+<hr>
+<div class="small">Os lançamentos que já estão na nuvem foram protegidos com outra senha de proteção. Informe essa senha para uni-los aos deste dispositivo. Nada é apagado.</div>
+<input id="syncRecoverPassword" type="password" placeholder="Senha de proteção anterior" autocomplete="off">
+<div class="sync-actions">
+<button class="primary" onclick="recoverCloudVault()">Unir dados da nuvem</button>
+</div>
+</div>
+<div class="small" style="margin-top:12px">A sincronização usa conexão segura e cada conta só acessa os próprios dados. O conteúdo enviado ao servidor permanece criptografado com a senha do aplicativo.</div>
+</div></div>
+<header><div class="wrap topbar">
+  <div class="brand">
+    <img src="logo.png" alt="Logo Sabores do Recôncavo">
+    <div><h1>Sabores do Recôncavo</h1><div class="subtitle">Meu Controle Financeiro</div></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px"><span id="appVersion" class="small" style="color:#fff"></span><button class="sync-btn" onclick="openSyncModal()"><span id="syncDot" class="sync-dot"></span>☁️ Sincronizar</button><button class="lock-btn" onclick="lockApp()">🔒 Bloquear</button></div>
+</div></header>
+<div class="wrap">
+<nav>
+<button class="active" data-view="inicio">🏠 Início</button>
+<button data-view="lancamento">➕ Lançamento</button>
+<button data-view="movi
