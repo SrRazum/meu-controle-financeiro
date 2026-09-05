@@ -6,15 +6,6 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
 // Fallback para versões parcialmente carregadas/em cache.
 if (typeof window.unlocked === "undefined") window.unlocked = false;
 
-/*
- * Bootstrap do Supabase e correção do login.
- * O login não chama a implementação antiga de syncLogin, pois ela depende
- * do binding lexical `unlocked` do index.html. Isso causava o erro
- * "unlocked is not defined" em versões parcialmente atualizadas do app.
- * Após autenticar, apenas verificamos se existem dados na nuvem e, havendo,
- * colocamos a tela de proteção no modo de restauração. A senha dos dados
- * continua sendo a senha de proteção do aplicativo, não a senha da conta.
- */
 (function(){
   let booted=false;
   let wrapped=false;
@@ -26,7 +17,6 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
   }
 
   async function bootCloud(){
-    if(booted) return true;
     if(!window.supabase || typeof window.supabase.createClient!=="function") return false;
     if(typeof window.initCloud!=="function") return false;
     try{
@@ -40,44 +30,29 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
   }
 
   async function login(){
-    if(!window.SUPABASE_URL || !window.SUPABASE_PUBLISHABLE_KEY){
-      message("Configure primeiro o acesso ao serviço de sincronização.");
-      return;
-    }
     const email=(document.getElementById("syncEmail")?.value||"").trim();
     const password=document.getElementById("syncPassword")?.value||"";
-    if(!email || !password){
-      message("Informe e-mail e senha.");
-      return;
-    }
-
+    if(!email || !password){ message("Informe e-mail e senha."); return; }
     message("Conectando ao serviço de sincronização...");
-    const ok=await bootCloud();
-    if(!ok){
+
+    if(!await bootCloud()){
       message("Não foi possível iniciar a sincronização. Atualize a página e tente novamente.");
       return;
     }
 
     try{
-      // Usa o cliente já criado por initCloud, quando disponível.
-      const client=window.__syncClient || null;
-      let result;
-      if(client){
-        result=await client.auth.signInWithPassword({email,password});
-      }else if(window.supabase && typeof window.supabase.createClient==="function"){
-        const fallback=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_PUBLISHABLE_KEY,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}});
-        result=await fallback.auth.signInWithPassword({email,password});
-      }else{
-        throw new Error("Cliente de autenticação indisponível.");
-      }
+      // Usa um cliente próprio para garantir que a autenticação seja concluída
+      // mesmo quando a versão do index.html em cache não expõe o cliente lexical.
+      const client=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_PUBLISHABLE_KEY,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}});
+      const result=await client.auth.signInWithPassword({email,password});
       if(result.error) throw result.error;
+      await client.auth.getSession();
 
+      // Recria o cliente interno do aplicativo para que __syncReady e os
+      // listeners de autenticação estejam alinhados com a sessão recém-criada.
+      await window.initCloud();
       document.getElementById("syncPassword").value="";
-      message("Conta conectada. Verificando os dados guardados na nuvem...");
 
-      // Se a implementação principal estiver disponível, ela possui o cliente
-      // lexical já autenticado. cloudFetchVault é usado apenas para decidir se
-      // há dados a restaurar; não baixamos nem alteramos nada nesta etapa.
       let hasCloud=false;
       if(typeof window.cloudFetchVault==="function"){
         try{ hasCloud=!!(await window.cloudFetchVault()); }catch(e){ console.warn("Verificação da nuvem:",e); }
