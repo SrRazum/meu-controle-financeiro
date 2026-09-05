@@ -71,7 +71,7 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     if(title) title.textContent="Restaurar dados da nuvem";
     if(description) description.textContent="Digite a senha de proteção usada anteriormente neste aplicativo para descriptografar e restaurar seus lançamentos.";
     if(button) button.textContent="Restaurar dados";
-    if(confirm) confirm.style.display="none";
+    if(confirm){confirm.style.display="none";confirm.required=false;}
     if(cloudBtn) cloudBtn.style.display="none";
     if(msg) msg.textContent="Conta conectada. Digite a senha de proteção usada para os dados da nuvem.";
 
@@ -80,11 +80,13 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     window.__securityMode="restore";
     window.__restoreFromCloud=true;
 
-    // Se o código principal não expôs setSecurityMode, tenta atualizar o
-    // estado através de uma nova inicialização sem apagar o modo escolhido.
-    if(form && typeof window.initializeSecurity==="function"){
-      try{ window.initializeSecurity(); }catch(e){ console.warn("Reinicialização da segurança:",e); }
-    }
+    // IMPORTANTE: não chamar initializeSecurity() aqui.
+    // Essa função recria o formulário e, quando não existe uma senha local,
+    // executa showLock("setup"), sobrescrevendo o modo restore e causando o
+    // loop: Sincronização -> Restaurar dados -> Criar proteção.
+    // O handler do formulário já é instalado pela inicialização normal do app
+    // e setSecurityMode("restore") acima é suficiente para direcioná-lo.
+    if(form) form.reset;
   }
 
   async function login(){
