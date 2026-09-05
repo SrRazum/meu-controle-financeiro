@@ -27,10 +27,15 @@ jobs:
           p=Path('index.html')
           s=p.read_text(encoding='utf-8')
 
-          # Identificação visual inequívoca da cópia de teste.
-          if 'V1.12' not in s:
-              raise SystemExit('Identificacao V1.12 nao encontrada na main; nenhuma alteracao feita.')
-          s=s.replace('V1.12','V1.13-TESTE',1)
+          # A main pode já estar em uma versão posterior à V1.12.
+          # Localizamos a identificação visual da versão atual e a transformamos
+          # apenas na cópia de teste, sem exigir que a main ainda contenha V1.12.
+          version_re=re.compile(r'V1\.\d+(?:-TESTE)?')
+          if 'V1.13-TESTE' not in s:
+              m=version_re.search(s)
+              if not m:
+                  raise SystemExit('Identificacao de versao nao encontrada na main; nenhuma alteracao feita.')
+              s=s[:m.start()]+'V1.13-TESTE'+s[m.end():]
 
           # O baseline atual da main possui uma estrutura de Relatórios diferente
           # da estrutura usada pelas tentativas anteriores. Substituímos somente
@@ -58,8 +63,6 @@ jobs:
               raise SystemExit('Lista de listeners esperada nao localizada; nenhuma alteracao feita.')
           s=s.replace(old_events,new_events,1)
 
-          # O novo input não precisa de um segundo seletor: o listener acima
-          # chama render() e preserva o mês escolhido.
           p.write_text(s,encoding='utf-8')
 
       - name: Commit da copia reconstruida
@@ -67,5 +70,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add index.html
-          git diff --cached --quiet || git commit -m 'fix: reconstruir teste do filtro de periodo a partir da V1.12'
+          git diff --cached --quiet || git commit -m 'fix: reconstruir teste do filtro de periodo a partir da main atual'
           git push
