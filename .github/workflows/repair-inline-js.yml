@@ -1,4 +1,4 @@
-name: Repair inline JavaScript
+name: Repair and stabilize application boot
 
 on:
   push:
@@ -15,24 +15,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Repair malformed JavaScript literals
+      - name: Apply definitive boot and sync fix
         shell: python
         run: |
           from pathlib import Path
           p = Path("index.html")
           s = p.read_text(encoding="utf-8")
           original = s
-          # Repair the known broken literal join("<real newline>") -> join("\\n").
+
+          # Repair the known malformed JavaScript newline literal.
           s = s.replace('join("\n")', 'join("\\n")')
-          # Also repair the same corruption when it appears with single quotes.
           s = s.replace("join('\n')", "join('\\n')")
+
+          # The cloud initializer used to run independently from the security
+          # initializer. When a persisted Supabase session existed, both could
+          # change the lock screen at the same time, producing the loop:
+          # synchronization -> cloud restore -> create protection.
+          old_boot = 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
+          new_boot = 'initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});'
+          if old_boot in s:
+              s = s.replace(old_boot, new_boot, 1)
+          elif 'initializeSecurity().then(async()=>' not in s:
+              raise SystemExit('Security bootstrap marker not found; refusing unsafe edit')
+
+          # initCloud must not be called a second time outside the security
+          # bootstrap. Remove the old independent call.
+          s = s.replace('initCloud();if("serviceWorker"in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./sw.js",{scope:"./"});if(registration.waiting)showUpdateNotice(registration);registration.addEventListener("updatefound",()=>{const worker=registration.installing;if(!worker)return;worker.addEventListener("statechange",()=>{if(worker.state==="installed"&&navigator.serviceWorker.controller)showUpdateNotice(registration)})})}catch(err){console.warn("Service Worker não pôde ser registrado:",err)}})}function showUpdateNotice(registration){if(document.getElementById("updateNotice"))return;const box=document.createElement("div");box.id="updateNotice";box.style.cssText="position:fixed;left:14px;right:14px;bottom:78px;z-index:90;background:#fff;border:1px solid #ddd;border-radius:12px;padding:12px 14px;box-shadow:0 8px 30px #0002;display:flex;gap:10px;align-items:center;justify-content:space-between;font-size:13px";box.innerHTML='<span>🔄 Há uma nova versão disponível.</span><button class="primary" style="padding:8px 12px" onclick="applyUpdate()">Atualizar</button>';document.body.appendChild(box);window.__pendingSW=registration.waiting}async function applyUpdate(){const sw=window.__pendingSW;if(sw)sw.postMessage({type:"SKIP_WAITING"});else location.reload()}if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}', '')
+
           if s == original:
-              print("No malformed newline literal found.")
+              print("No changes were necessary.")
           else:
               p.write_text(s, encoding="utf-8")
-              print("Repaired malformed JavaScript string literal.")
+              print("Definitive boot fix applied.")
 
-      - name: Validate inline JavaScript syntax
+      - name: Validate HTML inline JavaScript syntax
         shell: python
         run: |
           import re, subprocess, tempfile
@@ -61,6 +77,6 @@ jobs:
             echo "No changes to commit."
           else
             git add index.html
-            git commit -m "Fix inline JavaScript syntax and validate startup"
+            git commit -m "Fix boot race between security and cloud sync"
             git push
           fi
