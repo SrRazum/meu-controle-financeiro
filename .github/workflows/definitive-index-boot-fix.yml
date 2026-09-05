@@ -9,47 +9,57 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch index.html non-destructively
+      - name: Patch index.html
         shell: python
         run: |
           from pathlib import Path
-          p=Path('index.html'); s=p.read_text(encoding='utf-8')
-          original=s
+          import re
+          p=Path('index.html'); s=p.read_text(encoding='utf-8'); original=s
 
-          # Boot: local security only. Remove the old queue trigger from the startup promise.
+          # Local protection only during boot; no queueSync from initialization.
           s=s.replace('queueSync()','')
           s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
           s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
 
-          # Single sync gateway. If an earlier gateway exists, do not duplicate it.
+          # Add the only synchronization entry point before syncNow.
           if 'async function requestSync(manual=false)' not in s:
               needle='async function syncNow(manual=false)'
               gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)};'
               if needle not in s: raise SystemExit('syncNow definition not found')
               s=s.replace(needle,gate+needle,1)
 
-          # All boolean sync calls route through requestSync. The syncNow implementation itself is untouched.
-          s=s.replace('await syncNow(false)','await requestSync(false)')
-          s=s.replace('syncNow(false)','requestSync(false)')
-          s=s.replace('syncNow(true)','requestSync(true)')
+          # Replace all fixed sync calls with the single gate.
+          s=s.replace('await syncNow(false)','await requestSync(false)').replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
 
-          # Automatic restore is unreachable: rename helper and neutralize every call.
+          # Automatic cloud restore is disabled: helper is renamed and all old callers become no-ops.
           s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()',1)
           s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)')
           s=s.replace('else Promise.resolve(false)', 'else {}')
 
-          # Prevent cloud initialization from the boot tail while preserving the script's braces.
-          s=s.replace('initCloud();if("serviceWorker"in navigator){', 'if(unlocked)requestSync(false);if(false){',1)
-          # Disable the second Service Worker condition without deleting its body.
-          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}', 'if(false){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}',1)
+          # The old boot tail must not initialize cloud or register a Service Worker.
+          marker='initCloud();if("serviceWorker"in navigator){'
+          if marker in s:
+              a=s.find(marker); b=s.find('</script>',a)
+              if b<0: raise SystemExit('script end not found')
+              s=s[:a]+'window.addEventListener("online",()=>{if(unlocked)requestSync(false)});'+s[b:]
+          # Remove the registration block by stable boundaries, retaining its UI helper only if desired.
+          a=s.find('if("serviceWorker"in navigator){window.addEventListener("load",async()=>{')
+          if a>=0:
+              b=s.find('function showUpdateNotice',a)
+              if b<0: raise SystemExit('showUpdateNotice boundary not found')
+              s=s[:a]+s[b:]
+          # Disable the remaining controller-change listener completely.
+          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','')
 
-          # No Service Worker registration can execute; no queue/automatic restore call remains.
-          if 'navigator.serviceWorker.register' in s: raise SystemExit('Service Worker registration remains')
-          if 'queueSync()' in s: raise SystemExit('queueSync call remains')
-          if 'maybeOfferCloudRestore()' in s: raise SystemExit('automatic restore call remains')
+          # Strong invariants.
+          for token in ['navigator.serviceWorker.register','navigator.serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()']:
+              if token in s: raise SystemExit('Forbidden marker remains: '+token)
+          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow(false/true) remains')
+          if 'async function requestSync(manual=false)' not in s: raise SystemExit('requestSync missing')
           if s==original: raise SystemExit('No changes made')
           p.write_text(s,encoding='utf-8')
-          print('patched')
+          print('index.html patched')
+
       - name: Validate inline JavaScript
         shell: bash
         run: |
@@ -65,6 +75,7 @@ jobs:
                   print(r.stderr); raise SystemExit(f'Inline JavaScript syntax error in block {i}')
           print(f'{len(scripts)} inline JavaScript blocks validated.')
           PY
+
       - name: Commit patched index.html
         run: |
           git config user.name "github-actions[bot]"
