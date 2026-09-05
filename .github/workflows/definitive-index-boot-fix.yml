@@ -5,25 +5,72 @@ on:
 permissions:
   contents: write
 jobs:
-  diagnose:
+  fix:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
-      - name: Check historical index baselines
+      - name: Restore last known-good index baseline
+        run: |
+          git fetch origin 9a77d4abc45b2452fb8b91ede631431e18da5099 --depth=1
+          git show 9a77d4abc45b2452fb8b91ede631431e18da5099:index.html > index.html
+      - name: Apply definitive local-first boot fix
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('index.html'); s=p.read_text(encoding='utf-8')
+          # Single synchronization gateway.
+          needle='async function syncNow(manual=false)'
+          gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
+          if 'async function requestSync(manual=false)' not in s:
+              if needle not in s: raise SystemExit('syncNow definition not found')
+              s=s.replace(needle,gate+needle,1)
+          # Replace legacy queue helper before removing calls.
+          old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
+          if old_queue in s: s=s.replace(old_queue,gate,1)
+          s=s.replace('queueSync()','')
+          # Route fixed sync calls through the gate.
+          s=s.replace('await syncNow(false)','await requestSync(false)').replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
+          # Avoid recursive replacement if gate was altered by a previous version.
+          s=s.replace('async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return requestSync(manual)}',gate)
+          # Disable automatic restore path without affecting explicit recoverCloudVault.
+          s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()',1)
+          s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)').replace('else Promise.resolve(false)','else {}')
+          # No cloud initialization or Service Worker registration during boot.
+          s=s.replace('initCloud();if("serviceWorker"in navigator){','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});if("serviceWorker"in navigator){',1)
+          a=s.find('if("serviceWorker"in navigator){window.addEventListener("load",async()=>{')
+          if a>=0:
+              b=s.find('function showUpdateNotice',a)
+              if b<0: raise SystemExit('showUpdateNotice boundary not found')
+              s=s[:a]+s[b:]
+          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','')
+          # Local persistence first; synchronization is gated by unlocked.
+          s=s.replace('async function save(){await secureSave();if(typeof syncNow==="function")await requestSync(false)}','async function save(){await secureSave();if(unlocked)await requestSync(false)}')
+          p.write_text(s,encoding='utf-8')
+      - name: Validate final JavaScript and boot invariants
         shell: bash
         run: |
-          for c in 2134e5538686e5c4ae87fcd21c25e747c3f2d3d1 9a77d4abc45b2452fb8b91ede631431e18da5099 38bf610206e4e106cee662fe01fc67a635ae9ab2; do
-            git show "$c:index.html" > /tmp/index-$c.html
-            python - "$c" <<'PY'
-          import re,subprocess,sys,tempfile
+          python - <<'PY'
+          import re, subprocess, tempfile
           from pathlib import Path
-          c=sys.argv[1]; html=Path(f'/tmp/index-{c}.html').read_text(encoding='utf-8')
+          html=Path('index.html').read_text(encoding='utf-8')
           scripts=[x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.I|re.S) if x.strip()]
-          ok=True
           for i,script in enumerate(scripts,1):
-            f=Path(tempfile.gettempdir())/f'{c}-{i}.js';f.write_text(script,encoding='utf-8');r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
-            if r.returncode: print(c,'BLOCK',i,r.stderr);ok=False
-          print(c,'VALID' if ok else 'INVALID', 'blocks',len(scripts))
+              f=Path(tempfile.gettempdir())/f'inline-{i}.js'; f.write_text(script,encoding='utf-8')
+              r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
+              if r.returncode: print(r.stderr); raise SystemExit(1)
+          assert 'navigator.serviceWorker.register' not in html
+          assert 'queueSync()' not in html
+          assert 'maybeOfferCloudRestore()' not in html
+          assert 'async function requestSync(manual=false)' in html
+          assert not re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',html)
+          print('FINAL VALIDATION PASSED')
           PY
-          done
+      - name: Commit definitive index
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: definitive local-first boot and gated synchronization"
+          git push
