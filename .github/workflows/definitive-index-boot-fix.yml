@@ -12,37 +12,54 @@ jobs:
         with:
           fetch-depth: 0
       - name: Restore last known-good index baseline
-        shell: bash
         run: |
           git fetch origin 9a77d4abc45b2452fb8b91ede631431e18da5099 --depth=1
           git show 9a77d4abc45b2452fb8b91ede631431e18da5099:index.html > index.html
-      - name: Apply definitive local-first boot design
+      - name: Apply definitive boot fix
         shell: python
         run: |
           from pathlib import Path
+          import re
           p=Path('index.html'); s=p.read_text(encoding='utf-8')
-          # One gated sync entry point.
+
+          # 1. Install the single synchronization gate BEFORE changing syncNow callers.
           needle='async function syncNow(manual=false)'
           gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
           if 'async function requestSync(manual=false)' not in s:
               if needle not in s: raise SystemExit('syncNow definition not found')
               s=s.replace(needle,gate+needle,1)
-          # Route all fixed calls through requestSync.
-          s=s.replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
-          # Keep the syncNow implementation declaration/calls valid after replacements.
-          s=s.replace('async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return requestSync(manual)}',gate)
-          # Local save then gated sync.
-          s=s.replace('async function save(){await secureSave();if(typeof syncNow==="function")await syncNow(false)}','async function save(){await secureSave();if(unlocked)await requestSync(false)}')
-          # Boot must never initialize cloud or queue synchronization.
+
+          # 2. Replace legacy queue helper as a whole, then remove only remaining calls.
+          old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
+          if old_queue in s: s=s.replace(old_queue,gate,1)
           s=s.replace('queueSync()','')
-          s=s.replace('initCloud();if("serviceWorker"in navigator){','if(unlocked)requestSync(false);if(false){')
-          # Remove Service Worker registration code by replacing the whole registration condition with a no-op.
-          s=s.replace('if("serviceWorker"in navigator){window.addEventListener("load",async()=>{','if(false){window.addEventListener("load",async()=>{')
-          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','if(false){}')
-          # Automatic restore cannot run; keep explicit recoverCloudVault available.
-          s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)')
-          # Startup remains local-only.
-          s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";});')
+
+          # 3. Route fixed sync calls through the gate. requestSync itself calls syncNow(manual).
+          s=s.replace('await syncNow(false)','await requestSync(false)').replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
+          # Guard against accidental recursion if a previous pattern touched the gate.
+          s=s.replace('async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return requestSync(manual)}',gate)
+
+          # 4. Automatic restore is disabled; explicit recoverCloudVault remains.
+          s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()',1)
+          s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)').replace('else Promise.resolve(false)','else {}')
+
+          # 5. Boot must not initialize cloud. Preserve only a post-unlock online sync trigger.
+          s=s.replace('initCloud();if("serviceWorker"in navigator){','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});if("serviceWorker"in navigator){',1)
+
+          # 6. Remove Service Worker registration block by stable boundaries.
+          a=s.find('if("serviceWorker"in navigator){window.addEventListener("load",async()=>{')
+          if a>=0:
+              b=s.find('function showUpdateNotice',a)
+              if b<0: raise SystemExit('showUpdateNotice boundary not found')
+              s=s[:a]+s[b:]
+          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','')
+
+          # 7. Local save first; cloud is optional and gated.
+          s=s.replace('async function save(){await secureSave();if(typeof syncNow==="function")await requestSync(false)}','async function save(){await secureSave();if(unlocked)await requestSync(false)}')
+
+          # Final source invariants.
+          for token in ['navigator.serviceWorker.register','navigator.serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()','initCloud();if("serviceWorker"in navigator)']:
+              if token in s: raise SystemExit('Forbidden legacy marker remains: '+token)
           p.write_text(s,encoding='utf-8')
       - name: Validate JavaScript
         shell: bash
@@ -56,7 +73,7 @@ jobs:
               f=Path(tempfile.gettempdir())/f'inline-{i}.js'; f.write_text(script,encoding='utf-8')
               r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
               if r.returncode:
-                  print(r.stderr); raise SystemExit(1)
+                  print(r.stderr); raise SystemExit(f'Inline JavaScript syntax error in block {i}')
           print('All inline JavaScript blocks are syntactically valid.')
           PY
       - name: Commit definitive index
