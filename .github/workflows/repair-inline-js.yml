@@ -19,13 +19,15 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
           p = Path("index.html")
           s = p.read_text(encoding="utf-8")
           original = s
 
-          # Normalize the malformed newline literal in notifications.
-          s = s.replace('join("\\\n")', 'join("\\n")')
-          s = s.replace("join('\\\n')", "join('\\n')")
+          # The notifications code had a literal backslash followed by a
+          # physical newline inside join(), which breaks the JavaScript parser.
+          s = re.sub(r'join\("\\\n"\)', 'join("\\\\n")', s)
+          s = re.sub(r"join\('\\\n'\)", "join('\\\\n')", s)
           s = s.replace('join("\n")', 'join("\\n")')
           s = s.replace("join('\n')", "join('\\n')")
 
@@ -37,9 +39,8 @@ jobs:
           elif 'initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}' not in s:
               raise SystemExit("Security bootstrap marker not found; refusing unsafe edit")
 
-          # Remove the old independent initCloud() call and everything after it
-          # in the second inline script (legacy Service Worker registration and
-          # forced reload logic). The security bootstrap above now owns startup.
+          # Remove the old independent cloud initializer and the legacy
+          # Service Worker registration/reload block from index.html.
           marker = 'initCloud();if("serviceWorker"in navigator){'
           if marker in s:
               head, _, tail = s.partition(marker)
@@ -62,16 +63,14 @@ jobs:
           import re, subprocess, tempfile
           from pathlib import Path
           html = Path("index.html").read_text(encoding="utf-8")
-          scripts = re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.I|re.S)
-          inline = [x for x in scripts if x.strip()]
-          if not inline:
+          scripts = [x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.I|re.S) if x.strip()]
+          if not scripts:
               raise SystemExit("No inline scripts found")
-          for i, script in enumerate(inline, 1):
+          for i, script in enumerate(scripts, 1):
               f = Path(tempfile.gettempdir()) / f"inline-{i}.js"
               f.write_text(script, encoding="utf-8")
               r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
               if r.returncode:
-                  print(r.stdout)
                   print(r.stderr)
                   raise SystemExit(f"Inline JavaScript syntax error in script #{i}")
           print("All inline JavaScript blocks pass node --check.")
@@ -84,6 +83,6 @@ jobs:
             echo "No changes to commit."
           else
             git add index.html
-            git commit -m "Fix boot race and remove stale service worker startup"
+            git commit -m "Fix startup parser error and boot race"
             git push
           fi
