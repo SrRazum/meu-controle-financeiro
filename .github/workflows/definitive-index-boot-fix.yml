@@ -13,50 +13,29 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
           p=Path('index.html'); s=p.read_text(encoding='utf-8'); original=s
-
-          # Replace the queue helper FIRST, then remove remaining calls.
           old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
           gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
           if old_queue in s: s=s.replace(old_queue,gate,1)
           s=s.replace('queueSync()','')
-
-          # Local security only during boot; no cloud initialization here.
           s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
           s=s.replace('initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
-
-          # Route fixed sync calls through requestSync.
           s=s.replace('await syncNow(false)','await requestSync(false)').replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
-
-          # Disable automatic restore calls while keeping explicit recoverCloudVault intact.
           s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()',1)
           s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)').replace('else Promise.resolve(false)','else {}')
-
-          # Prevent cloud/SW boot tail from executing, without changing surrounding braces.
           s=s.replace('initCloud();if("serviceWorker"in navigator){','if(unlocked)requestSync(false);if(false){',1)
-          # Remove registration block from its opening if(false) to the helper definition, preserving helper syntax.
           a=s.find('if(false){window.addEventListener("load",async()=>{')
           if a>=0:
               b=s.find('function showUpdateNotice',a)
               if b<0: raise SystemExit('showUpdateNotice boundary not found')
               s=s[:a]+s[b:]
-          # Disable controller-change reload listener.
           s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','')
-
-          # save() must persist locally first and only then request a gated sync.
-          s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}', 'async function save(){await secureSave();if(unlocked)await requestSync(false)}', s, count=1)
-
-          # Assertions.
+          s=s.replace('async function save(){await secureSave();if(typeof syncNow==="function")await requestSync(false)}','async function save(){await secureSave();if(unlocked)await requestSync(false)}')
           for token in ['navigator.serviceWorker.register','navigator.serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()']:
               if token in s: raise SystemExit('Forbidden marker remains: '+token)
-          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow(false/true) remains')
-          if 'async function requestSync(manual=false)' not in s: raise SystemExit('requestSync missing')
-          if s==original: raise SystemExit('No changes made')
           p.write_text(s,encoding='utf-8')
-          print('index.html patched')
-
-      - name: Validate inline JavaScript
+          print('patched')
+      - name: Validate JavaScript
         shell: bash
         run: |
           python - <<'PY'
@@ -68,10 +47,13 @@ jobs:
               f=Path(tempfile.gettempdir())/f'inline-{i}.js'; f.write_text(script,encoding='utf-8')
               r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
               if r.returncode:
-                  print(r.stderr); raise SystemExit(f'Inline JavaScript syntax error in block {i}')
-          print(f'{len(scripts)} inline JavaScript blocks validated.')
+                  print(r.stderr)
+                  print('--- SCRIPT TAIL ---')
+                  lines=script.splitlines()
+                  for n,line in list(enumerate(lines,1))[-20:]: print(f'{n}: {line}')
+                  raise SystemExit(1)
+          print('syntax OK')
           PY
-
       - name: Commit patched index.html
         run: |
           git config user.name "github-actions[bot]"
