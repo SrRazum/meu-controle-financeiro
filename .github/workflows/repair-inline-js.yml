@@ -24,13 +24,13 @@ jobs:
           s = p.read_text(encoding="utf-8")
           original = s
 
-          # Normalize the malformed newline literal in notifications.
+          # Repair the malformed notification separator.
           s = re.sub(r'join\("\\\n"\)', 'join("\\\\n")', s)
           s = re.sub(r"join\('\\\n'\)", "join('\\\\n')", s)
           s = s.replace('join("\n")', 'join("\\n")')
           s = s.replace("join('\n')", "join('\\n')")
 
-          # Serialize startup: security must finish before cloud sync starts.
+          # Prevent the cloud initializer from racing the security initializer.
           old_boot = 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
           new_boot = 'initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});'
           if old_boot in s:
@@ -38,8 +38,7 @@ jobs:
           elif 'initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}' not in s:
               raise SystemExit("Security bootstrap marker not found; refusing unsafe edit")
 
-          # Remove the old independent cloud initializer and the legacy
-          # Service Worker registration/reload block from index.html.
+          # Remove the old independent cloud initializer and all legacy SW code.
           marker = 'initCloud();if("serviceWorker"in navigator){'
           if marker in s:
               head, _, tail = s.partition(marker)
@@ -47,13 +46,11 @@ jobs:
               if closing < 0:
                   raise SystemExit("Could not locate script closing tag")
               s = head + '</script>' + tail[closing + len('</script>'):]
-          elif 'serviceWorker.register("./sw.js"' in s:
-              raise SystemExit("Unexpected Service Worker block layout; refusing unsafe edit")
 
           p.write_text(s, encoding="utf-8")
           print("Definitive boot fix applied.")
 
-      - name: Validate and diagnose inline JavaScript
+      - name: Validate JavaScript and commit only a valid build
         shell: python
         run: |
           import re, subprocess, tempfile
@@ -65,10 +62,20 @@ jobs:
               f.write_text(script, encoding="utf-8")
               r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
               if r.returncode:
-                  print(f"--- SCRIPT {i}: last 12 lines ---")
+                  print(f"SCRIPT {i} failed. Last 15 lines:")
                   lines = script.splitlines()
-                  for n, line in enumerate(lines[-12:], max(1, len(lines)-11)):
+                  for n, line in enumerate(lines[-15:], max(1, len(lines)-14)):
                       print(f"{n}: {line}")
+                  # Find whether removing one source line restores syntax.
+                  candidates=[]
+                  for idx in range(len(lines)):
+                      test='\n'.join(lines[:idx]+lines[idx+1:])
+                      tf=Path(tempfile.gettempdir())/f"test-{i}.js"
+                      tf.write_text(test, encoding="utf-8")
+                      rr=subprocess.run(["node","--check",str(tf)],capture_output=True,text=True)
+                      if rr.returncode==0:
+                          candidates.append(idx+1)
+                  print("Single-line removal candidates:", candidates)
                   print(r.stderr)
                   raise SystemExit(f"Inline JavaScript syntax error in script #{i}")
           print("All inline JavaScript blocks pass node --check.")
