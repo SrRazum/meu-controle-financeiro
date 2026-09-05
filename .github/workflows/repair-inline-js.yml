@@ -15,67 +15,80 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply definitive boot and sync fix
+      - name: Rewrite damaged startup block
         shell: python
         run: |
           from pathlib import Path
           import re
           p = Path("index.html")
           s = p.read_text(encoding="utf-8")
-          original = s
 
-          # Repair the malformed notification separator.
-          s = re.sub(r'join\("\\\n"\)', 'join("\\\\n")', s)
-          s = re.sub(r"join\('\\\n'\)", "join('\\\\n')", s)
-          s = s.replace('join("\n")', 'join("\\n")')
-          s = s.replace("join('\n')", "join('\\n')")
+          # Rewrite the whole category/status initialization statement rather
+          # than attempting another incremental repair of the damaged literal.
+          pattern = r'function updateCats\(\).*?document\.getElementById\("data"\)\.value=today\(\);'
+          replacement = '''function updateCats(){
+          const el=document.getElementById("categoria");
+          const tipoEl=document.getElementById("tipo");
+          if(!el||!tipoEl)return;
+          const old=el.value;
+          el.innerHTML=(cats[tipoEl.value]||[]).map(x=>`<option>${x}</option>`).join("");
+          if((cats[tipoEl.value]||[]).includes(old))el.value=old;
+          }
+          function updateStatusOptions(){
+          const s=document.getElementById("status");
+          const tipoEl=document.getElementById("tipo");
+          if(!s||!tipoEl)return;
+          const old=s.value;
+          const entrada=tipoEl.value==="entrada";
+          s.innerHTML=entrada?'<option value="pago">Recebido</option><option value="pendente">Pendente</option>':'<option value="pago">Pago</option><option value="pendente">Pendente</option>';
+          s.value=old==="pendente"?"pendente":"pago";
+          }
+          const tipoEl=document.getElementById("tipo");
+          if(tipoEl)tipoEl.addEventListener("change",()=>{updateCats();updateStatusOptions()});
+          updateCats();
+          updateStatusOptions();
+          document.getElementById("data").value=today();'''
+          s2,n=re.subn(pattern,replacement,s,count=1,flags=re.S)
+          if n!=1:
+              raise SystemExit("Damaged category/status startup block not found; refusing unsafe edit")
+          s=s2
 
-          # Prevent the cloud initializer from racing the security initializer.
-          old_boot = 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
-          new_boot = 'initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});'
+          # Repair any remaining physical-newline join literal.
+          s=re.sub(r'join\("\\\n"\)', 'join("\\\\n")', s)
+          s=re.sub(r"join\('\\\n'\)", "join('\\\\n')", s)
+
+          # Serialize startup: security must finish before cloud sync starts.
+          old_boot='initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
+          new_boot='initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});'
           if old_boot in s:
-              s = s.replace(old_boot, new_boot, 1)
+              s=s.replace(old_boot,new_boot,1)
           elif 'initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}' not in s:
               raise SystemExit("Security bootstrap marker not found; refusing unsafe edit")
 
-          # Remove the old independent cloud initializer and all legacy SW code.
-          marker = 'initCloud();if("serviceWorker"in navigator){'
+          # Remove the old independent cloud initializer and all legacy
+          # Service Worker registration/reload code from index.html.
+          marker='initCloud();if("serviceWorker"in navigator){'
           if marker in s:
-              head, _, tail = s.partition(marker)
-              closing = tail.find('</script>')
-              if closing < 0:
-                  raise SystemExit("Could not locate script closing tag")
-              s = head + '</script>' + tail[closing + len('</script>'):]
+              head,_,tail=s.partition(marker)
+              closing=tail.find('</script>')
+              if closing<0: raise SystemExit("Script closing tag not found")
+              s=head+'</script>'+tail[closing+len('</script>'):]
 
-          p.write_text(s, encoding="utf-8")
+          p.write_text(s,encoding="utf-8")
           print("Definitive boot fix applied.")
 
-      - name: Validate JavaScript and commit only a valid build
+      - name: Validate inline JavaScript syntax
         shell: python
         run: |
           import re, subprocess, tempfile
           from pathlib import Path
-          html = Path("index.html").read_text(encoding="utf-8")
-          scripts = [x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.I|re.S) if x.strip()]
-          for i, script in enumerate(scripts, 1):
-              f = Path(tempfile.gettempdir()) / f"inline-{i}.js"
-              f.write_text(script, encoding="utf-8")
-              r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
+          html=Path("index.html").read_text(encoding="utf-8")
+          scripts=[x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.I|re.S) if x.strip()]
+          for i,script in enumerate(scripts,1):
+              f=Path(tempfile.gettempdir())/f"inline-{i}.js"
+              f.write_text(script,encoding="utf-8")
+              r=subprocess.run(["node","--check",str(f)],capture_output=True,text=True)
               if r.returncode:
-                  print(f"SCRIPT {i} failed. Last 15 lines:")
-                  lines = script.splitlines()
-                  for n, line in enumerate(lines[-15:], max(1, len(lines)-14)):
-                      print(f"{n}: {line}")
-                  # Find whether removing one source line restores syntax.
-                  candidates=[]
-                  for idx in range(len(lines)):
-                      test='\n'.join(lines[:idx]+lines[idx+1:])
-                      tf=Path(tempfile.gettempdir())/f"test-{i}.js"
-                      tf.write_text(test, encoding="utf-8")
-                      rr=subprocess.run(["node","--check",str(tf)],capture_output=True,text=True)
-                      if rr.returncode==0:
-                          candidates.append(idx+1)
-                  print("Single-line removal candidates:", candidates)
                   print(r.stderr)
                   raise SystemExit(f"Inline JavaScript syntax error in script #{i}")
           print("All inline JavaScript blocks pass node --check.")
