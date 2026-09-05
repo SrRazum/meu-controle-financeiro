@@ -1,4 +1,4 @@
-t.innerHTML=(activeData().filter(x=>x.status==="pendente"&&x.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))).map(d=>`<div class="card" style="margin-bottom:8px"><div class="actions"><strong>${d.descricao}</strong><span class="status ${statusClass(d)}">${statusText(d)}</span><span style="margin-left:auto">${brl(d.valor)}</span></div><div class="label">Vencimento: ${fmtDate(d.vencimento)} · ${d.controle} · ${d.categoria}</div><div class="actions" style="margin-top:8px"><button class="success" onclick="pay('${d.id}')">☑ Marcar como pago</button></div></div>`).join("")||'<div class="empty">Nenhum vencimento pendente.</div>';
+iv class="actions"><strong>${d.descricao}</strong><span class="status ${statusClass(d)}">${statusText(d)}</span><span style="margin-left:auto">${brl(d.valor)}</span></div><div class="label">Vencimento: ${fmtDate(d.vencimento)} · ${d.controle} · ${d.categoria}</div><div class="actions" style="margin-top:8px"><button class="success" onclick="pay('${d.id}')">☑ Marcar como pago</button></div></div>`).join("")||'<div class="empty">Nenhum vencimento pendente.</div>';
  loadPrefs();
 }
 function dueRow(d){let n=daysUntil(d.vencimento);let txt=n<0?`vencida há ${Math.abs(n)} dia(s)`:n===0?"vence hoje":`vence em ${n} dia(s)`;return `<div style="padding:9px 0;border-bottom:1px solid var(--line)"><strong>${d.descricao}</strong> — ${brl(d.valor)} · ${fmtDate(d.vencimento)} <span class="label">(${txt})</span></div>`}
@@ -50,7 +50,7 @@ document.getElementById("editForm").onsubmit=async e=>{
 };
 function notifications(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3":true,"1":true,"0":true,"over":true}'), msgs=[];activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{let n=daysUntil(x.vencimento);if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over))msgs.push(`${x.descricao}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`)});if(msgs.length&&"Notification"in window&&Notification.permission==="granted")new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\n")});}
 if("Notification"in window&&Notification.permission==="default")Notification.requestPermission().catch(()=>{});
-initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.12"; queueSync();});
+initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.12";});
 </script>
 <script>
 
@@ -68,7 +68,8 @@ function setSyncState(state){
  const d=document.getElementById("syncDot"); if(!d)return;
  d.className="sync-dot "+(state||"");
 }
-function openSyncModal(){
+async function openSyncModal(){
+ await initCloud();
  document.getElementById("syncModal").classList.add("show");
  const msg=document.getElementById("syncMsg");
  msg.textContent=syncConfigured()?"":"A sincronização ainda precisa ser configurada no arquivo config.js.";
@@ -139,7 +140,8 @@ async function pushMerged(user,remoteValue){
  render();
 }
 async function initCloud(){
- if(!syncConfigured()){setSyncState("err");return}
+ if(__supabase) return __syncReady;
+ if(!syncConfigured()){setSyncState("err");return false}
  try{
    __supabase=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_PUBLISHABLE_KEY,{
      auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}
@@ -153,16 +155,16 @@ async function initCloud(){
      refreshSyncUI();
      if(!newSession)return;
      if(unlocked)syncNow(false);
-     else maybeOfferCloudRestore();
    });
    refreshSyncUI();
-   if(session){
-     if(unlocked) await syncNow(false);
-     else await maybeOfferCloudRestore();
+   if(session && unlocked){
+     await syncNow(false);
    }
- }catch(e){console.warn("Falha ao iniciar sincronização",e);setSyncState("err")}
+   return __syncReady;
+ }catch(e){console.warn("Falha ao iniciar sincronização",e);setSyncState("err");return false}
 }
 async function syncLogin(){
+ await initCloud();
  if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
  const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
  const msg=document.getElementById("syncMsg");msg.textContent="";
@@ -185,6 +187,7 @@ async function syncLogin(){
  await syncNow(true);refreshSyncUI();
 }
 async function syncSignup(){
+ await initCloud();
  if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
  const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
  const msg=document.getElementById("syncMsg");msg.textContent="";
@@ -215,4 +218,6 @@ async function syncNow(manual=false){
  try{
    const {user,row}=await cloudVaultRow("payload,updated_at");
    /* Primeiro dispositivo da conta: envia o que ja existe aqui. */
-   if(!r
+   if(!row){
+     const payload=await encryptData(window.__financePassword,data);
+     const {error}=await __supabase.from("finance_vault"

@@ -143,11 +143,6 @@ async function decryptVault(password,raw){
    return {ok:false,reason:e&&e.message==="VAULT_FORMAT"?"format":"password"};
  }
 }
-/* Dispara a sincronizacao quando o modulo de nuvem ja estiver carregado. */
-function queueSync(){
- if(typeof syncNow!=="function")return;
- Promise.resolve().then(()=>syncNow(false)).catch(()=>{});
-}
 async function secureSave(){
  if(!unlocked)return;
  const blob=await encryptData(window.__financePassword,data);
@@ -211,4 +206,9 @@ async function initializeSecurity(){
  const form=document.getElementById("unlockForm");
  const password=document.getElementById("unlockPassword");
  const password2=document.getElementById("unlockPassword2");
- const msg=
+ const msg=document.getElementById("lockMsg");
+ form.onsubmit=async e=>{
+   e.preventDefault();
+   msg.textContent="";
+   const p=password.value;
+   if(p.length<6){msg.textContent="Use uma senha com pelo menos 6

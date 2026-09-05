@@ -1,6 +1,4 @@
-ow){
-     const payload=await encryptData(window.__financePassword,data);
-     const {error}=await __supabase.from("finance_vault").insert({user_id:user.id,payload});
+).insert({user_id:user.id,payload});
      if(error)throw error;
      __cloudMismatch=false;setRecoverVisible(false);setSyncState("ok");
      if(manual&&msg){msg.textContent="Sincronização concluída.";refreshSyncUI()}
@@ -100,7 +98,8 @@ function mergeRecords(a,b){
 }
 window.addEventListener("online",()=>{if(unlocked)syncNow(false)});
 
-initCloud();
+// Supabase is initialized only when the user opens the synchronization UI.
+
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {

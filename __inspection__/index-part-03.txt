@@ -1,9 +1,4 @@
-document.getElementById("lockMsg");
- form.onsubmit=async e=>{
-   e.preventDefault();
-   msg.textContent="";
-   const p=password.value;
-   if(p.length<6){msg.textContent="Use uma senha com pelo menos 6 caracteres.";return}
+ caracteres.";return}
 
    /* Dispositivo novo com cofre na nuvem: a senha informada precisa abrir o
       conteudo que ja existe na conta. Nunca criamos uma protecao paralela. */
@@ -32,7 +27,8 @@ document.getElementById("lockMsg");
      window.__financePassword=p;
      unlocked=true;
      try{await secureSave()}catch(err){}
-     hideLock();render();resetInactivity();queueSync();
+     hideLock();render();resetInactivity();
+     if(__syncReady) syncNow(false);
      return;
    }
 
@@ -44,7 +40,8 @@ document.getElementById("lockMsg");
      try{
        unlocked=true;
        await secureSave();
-       hideLock();render();resetInactivity();queueSync();
+       hideLock();render();resetInactivity();
+       if(__syncReady) syncNow(false);
      }catch(err){
        window.__financePassword=null;unlocked=false;
        msg.textContent="Não foi possível proteger os dados neste navegador.";
@@ -64,7 +61,7 @@ document.getElementById("lockMsg");
    }
    data=res.value;
    window.__financePassword=p;unlocked=true;hideLock();render();resetInactivity();
-   queueSync();
+   if(__syncReady) syncNow(false);
  };
  if(stored){showLock("unlock");}
  else{showLock("setup");}
@@ -74,7 +71,7 @@ const cats={entrada:["Vendas","Eventos","Salário","Transferência recebida","Ou
 
 const brl=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
 const today=()=>new Date().toISOString().slice(0,10);
-async function save(){await secureSave(); if(typeof syncNow==="function") await syncNow(false)}
+async function save(){await secureSave();}
 function fmtDate(s){return s?new Date(s+"T12:00:00").toLocaleDateString("pt-BR"):"—"}
 function daysUntil(s){return Math.ceil((new Date(s+"T12:00:00")-new Date(today()+"T12:00:00"))/86400000)}
 function statusClass(x){return x==="pago"?"paid":daysUntil(x.vencimento)<0?"overdue":"pending"}
@@ -162,4 +159,4 @@ function render(){
  let m=activeData().filter(x=>x.data.startsWith(month)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);
  reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",activeData().filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0),"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");
  let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no mês atual.</td></tr>';
- dueLis
+ dueList.innerHTML=(activeData().filter(x=>x.status==="pendente"&&x.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))).map(d=>`<div class="card" style="margin-bottom:8px"><d
