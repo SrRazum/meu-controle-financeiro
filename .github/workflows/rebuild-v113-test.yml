@@ -20,7 +20,6 @@ jobs:
         run: |
           import subprocess
           from pathlib import Path
-          import re
 
           subprocess.run(['git','fetch','origin','main'], check=True)
           subprocess.run(['git','checkout','origin/main','--','index.html'], check=True)
@@ -35,10 +34,6 @@ jobs:
           if old not in s:
               raise SystemExit('Secao de relatorios nao encontrada na V1.12; nenhuma alteracao de filtro feita.')
           s=s.replace(old,new,1)
-
-          pattern=r'(let m=activeData\(\)\.filter\(x=>x\.data\.startsWith\(month\)), en=m\.filter\(x=>x\.tipo===\\"entrada\\"\)\.reduce\(\(s,x\)=>s\+x\.valor,0\), sa=m\.filter\(x=>x\.tipo===\\"saida\\"\)\.reduce\(\(s,x\)=>s\+x\.valor,0\);\n reportCards\.innerHTML=)'
-          if not re.search(pattern,s):
-              raise SystemExit('Bloco de calculo de relatorios nao localizado; nenhuma alteracao feita.')
 
           oldcalc='''let m=activeData().filter(x=>x.data.startsWith(month)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",activeData().filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0),"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");'''
           newcalc='''let reportMonthEl=document.getElementById("reportMonth");\n if(reportMonthEl && !reportMonthEl.value)reportMonthEl.value=month;\n let reportPeriod=reportMonthEl?.value||month;\n let m=activeData().filter(x=>x.data.startsWith(reportPeriod)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);\n let pendingPeriod=m.filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",pendingPeriod,"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");'''
