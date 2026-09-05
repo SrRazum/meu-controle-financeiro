@@ -15,68 +15,36 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Repair JavaScript startup and boot order
-        shell: python
+      - name: Restore known-good index and disable boot race
+        shell: bash
         run: |
+          git checkout b91e2488c5a842dede704659cd1165b027c7abc6 -- index.html
+          python - <<'PY'
           from pathlib import Path
-          import re
-          p=Path("index.html")
-          s=p.read_text(encoding="utf-8")
-
-          # Replace the complete notifications/bootstrap tail. This avoids
-          # carrying forward the malformed string literal that caused the
-          # browser parser to stop at the end of the first script block.
-          start=s.find('function notifications(){')
-          end=s.find('</script>', start)
-          if start<0 or end<0:
-              raise SystemExit('Notification/bootstrap block not found; refusing unsafe edit')
-          clean='''function notifications(){
-          let p={"7":true,"3":true,"1":true,"0":true,"over":true};
-          try{p=JSON.parse(localStorage.getItem(PREF)||JSON.stringify(p))}catch(e){}
-          const msgs=[];
-          activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{
-            const n=daysUntil(x.vencimento);
-            if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over)){
-              msgs.push(`${x.descricao}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`);
-            }
-          });
-          if(msgs.length&&"Notification"in window&&Notification.permission==="granted"){
-            try{new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\\n")})}catch(e){}
-          }
-          }
-          if("Notification"in window&&Notification.permission==="default")Notification.requestPermission().catch(()=>{});
-          window.addEventListener("load",async()=>{
-            try{
-              await initializeSecurity();
-              const v=document.getElementById("appVersion");
-              if(v)v.textContent="V1.15";
-              if(typeof initCloud==="function")await initCloud();
-              if(unlocked)await syncNow(false);
-              else await maybeOfferCloudRestore();
-            }catch(err){console.error("Falha na inicialização do aplicativo:",err)}
-          });
-          '''
-          s=s[:start]+clean+s[end:]
-
-          # Do not initialize cloud before security has finished.
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+          # Keep the known-good application UI/data logic, but prevent cloud
+          # initialization from racing the local security initialization.
           s=s.replace('initCloud();if("serviceWorker"in navigator){','if("serviceWorker"in navigator){')
-
-          # Do not register the obsolete service worker from index.html.
+          # Remove page-side registration of the obsolete service worker.
           marker='if("serviceWorker"in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./sw.js"'
           m=s.find(marker)
           if m>=0:
-              # Remove the complete legacy SW/update block up to the end of
-              # the second script, preserving the closing script tag.
               close=s.find('</script>',m)
-              if close<0: raise SystemExit('SW script closing tag not found')
+              if close<0: raise SystemExit('Service-worker block is incomplete')
               s=s[:m]+s[close:]
+          # Start security and cloud only after all scripts are available.
+          old='initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.12";queueSync()});'
+          if old in s:
+              new='window.addEventListener("load",async()=>{try{await initializeSecurity();const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";if(typeof initCloud==="function")await initCloud();if(unlocked)await syncNow(false);else await maybeOfferCloudRestore()}catch(err){console.error("Falha na inicialização do aplicativo:",err)}});'
+              s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+          PY
 
-          p.write_text(s,encoding="utf-8")
-          print('Boot repair written.')
-
-      - name: Validate every inline JavaScript block
-        shell: python
+      - name: Validate inline JavaScript syntax
+        shell: bash
         run: |
+          python - <<'PY'
           import re, subprocess, tempfile
           from pathlib import Path
           html=Path('index.html').read_text(encoding='utf-8')
@@ -90,6 +58,7 @@ jobs:
                   print(r.stderr)
                   raise SystemExit(f'Inline JavaScript syntax error in script #{i}')
           print(f'All {len(scripts)} inline JavaScript blocks pass node --check.')
+          PY
 
       - name: Commit repaired application
         run: |
@@ -99,6 +68,6 @@ jobs:
             echo "No changes to commit."
           else
             git add index.html
-            git commit -m "Repair malformed boot script and startup order"
+            git commit -m "Restore stable application boot and preserve data"
             git push
           fi
