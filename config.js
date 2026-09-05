@@ -1,7 +1,6 @@
 // Boot seguro do Meu Controle Financeiro.
-// REGRA: o Supabase fica bloqueado durante todo o boot inicial.
-// A conexão só é liberada depois que o núcleo de segurança define
-// window.unlocked = true e dispara finance:unlocked.
+// O Supabase fica bloqueado durante o boot inicial e só é liberado
+// depois que o aplicativo estiver efetivamente desbloqueado.
 (function () {
   'use strict';
 
@@ -9,10 +8,11 @@
   var KEY_VALUE = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
   var realSupabase = null;
   var cloudUnlocked = false;
+  var eventSent = false;
 
-  // Captura a instância criada pelo CDN. Antes do desbloqueio, qualquer
-  // tentativa de createClient feita pelo código legado falha de propósito.
-  // Isso neutraliza chamadas prematuras de initCloud() sem quebrar o CDN.
+  // O CDN do Supabase é carregado depois deste arquivo. Capturamos a
+  // instância quando ele fizer window.supabase = ... e, enquanto o app
+  // estiver bloqueado, impedimos createClient de iniciar a nuvem.
   try {
     var descriptor = Object.getOwnPropertyDescriptor(window, 'supabase');
     if (!descriptor || descriptor.configurable !== false) {
@@ -20,8 +20,7 @@
         configurable: true,
         enumerable: true,
         get: function () {
-          if (realSupabase) return realSupabase;
-          if (cloudUnlocked && window.__supabaseReal) return window.__supabaseReal;
+          if (realSupabase && cloudUnlocked) return realSupabase;
           return {
             createClient: function () {
               throw new Error('SUPABASE_BOOT_BLOCKED');
@@ -30,31 +29,29 @@
         },
         set: function (value) {
           realSupabase = value;
-          window.__supabaseReal = value;
         }
       });
     }
   } catch (_) {}
 
-  function clearOldServiceWorkersAndCaches() {
-    try {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          return Promise.all(regs.map(function (reg) {
-            try { return reg.unregister(); } catch (_) { return false; }
-          }));
-        }).catch(function () {});
-      }
-      if ('caches' in window) {
-        caches.keys().then(function (keys) {
-          return Promise.all(keys.map(function (key) {
-            try { return caches.delete(key); } catch (_) { return false; }
-          }));
-        }).catch(function () {});
-      }
-    } catch (_) {}
-  }
-  clearOldServiceWorkersAndCaches();
+  // Limpa Service Workers/cache de versões antigas. O app não depende mais
+  // de Service Worker para funcionar.
+  try {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (regs) {
+        return Promise.all(regs.map(function (reg) {
+          try { return reg.unregister(); } catch (_) { return false; }
+        }));
+      }).catch(function () {});
+    }
+    if ('caches' in window) {
+      caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (key) {
+          try { return caches.delete(key); } catch (_) { return false; }
+        }));
+      }).catch(function () {});
+    }
+  } catch (_) {}
 
   function startCloudAfterUnlock() {
     if (cloudUnlocked || !window.unlocked) return;
@@ -64,12 +61,22 @@
     window.SUPABASE_URL = URL_VALUE;
     window.SUPABASE_PUBLISHABLE_KEY = KEY_VALUE;
 
-    try {
-      if (realSupabase) window.__supabaseReal = realSupabase;
-      window.initCloud();
-    } catch (_) {}
+    try { window.initCloud(); } catch (_) {}
   }
 
   window.startCloudAfterUnlock = startCloudAfterUnlock;
   window.addEventListener('finance:unlocked', startCloudAfterUnlock);
+
+  // Compatibilidade com a versão atual do index.html: como ela ainda chama
+  // initCloud() no final do script, observamos o desbloqueio e só então
+  // liberamos a instância real e iniciamos a nuvem uma única vez.
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    if (window.unlocked && !eventSent) {
+      eventSent = true;
+      try { window.dispatchEvent(new Event('finance:unlocked')); } catch (_) { startCloudAfterUnlock(); }
+    }
+    if (cloudUnlocked || tries >= 3600) clearInterval(timer);
+  }, 100);
 })();
