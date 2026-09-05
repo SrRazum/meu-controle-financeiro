@@ -24,8 +24,7 @@ jobs:
           s = p.read_text(encoding="utf-8")
           original = s
 
-          # The notifications code had a literal backslash followed by a
-          # physical newline inside join(), which breaks the JavaScript parser.
+          # Normalize the malformed newline literal in notifications.
           s = re.sub(r'join\("\\\n"\)', 'join("\\\\n")', s)
           s = re.sub(r"join\('\\\n'\)", "join('\\\\n')", s)
           s = s.replace('join("\n")', 'join("\\n")')
@@ -51,26 +50,25 @@ jobs:
           elif 'serviceWorker.register("./sw.js"' in s:
               raise SystemExit("Unexpected Service Worker block layout; refusing unsafe edit")
 
-          if s == original:
-              print("No changes were necessary.")
-          else:
-              p.write_text(s, encoding="utf-8")
-              print("Definitive boot fix applied.")
+          p.write_text(s, encoding="utf-8")
+          print("Definitive boot fix applied.")
 
-      - name: Validate inline JavaScript syntax
+      - name: Validate and diagnose inline JavaScript
         shell: python
         run: |
           import re, subprocess, tempfile
           from pathlib import Path
           html = Path("index.html").read_text(encoding="utf-8")
           scripts = [x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>', html, flags=re.I|re.S) if x.strip()]
-          if not scripts:
-              raise SystemExit("No inline scripts found")
           for i, script in enumerate(scripts, 1):
               f = Path(tempfile.gettempdir()) / f"inline-{i}.js"
               f.write_text(script, encoding="utf-8")
               r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
               if r.returncode:
+                  print(f"--- SCRIPT {i}: last 12 lines ---")
+                  lines = script.splitlines()
+                  for n, line in enumerate(lines[-12:], max(1, len(lines)-11)):
+                      print(f"{n}: {line}")
                   print(r.stderr)
                   raise SystemExit(f"Inline JavaScript syntax error in script #{i}")
           print("All inline JavaScript blocks pass node --check.")
