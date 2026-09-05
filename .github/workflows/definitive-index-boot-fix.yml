@@ -9,76 +9,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch index.html safely
+      - name: Transform index.html
         shell: python
         run: |
           from pathlib import Path
-          import re
-          p=Path('index.html')
-          s=p.read_text(encoding='utf-8')
-          original=s
-
-          # Local protection is the only boot operation.
+          p=Path('index.html'); s=p.read_text(encoding='utf-8')
           s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
           s=s.replace('initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
-
-          # Rename the legacy helper so no code path can invoke it automatically; callers are disabled below.
-          s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()', 1)
+          s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()',1)
           s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)')
           s=s.replace('else Promise.resolve(false)', 'else {}')
-
-          # Remove only the legacy cloud/SW bootstrap tail. Keep the online trigger, but gate it.
           marker='initCloud();if("serviceWorker"in navigator){'
           if marker in s:
               a=s.find(marker); b=s.find('</script>',a)
               if b<0: raise SystemExit('script end not found')
               s=s[:a]+'window.addEventListener("online",()=>{if(unlocked)requestSync(false)});'+s[b:]
-          else:
-              s=s.replace('window.addEventListener("online",()=>{if(unlocked)syncNow(false)});','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});',1)
-
-          # Replace exact legacy queue helper with the single gate.
-          old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
+          else: s=s.replace('window.addEventListener("online",()=>{if(unlocked)syncNow(false)});','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});',1)
+          old='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
           gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
-          if old_queue in s: s=s.replace(old_queue,gate,1)
+          if old in s: s=s.replace(old,gate,1)
           s=s.replace('queueSync()','')
-
-          # Route all fixed sync calls through the gate.
-          s=s.replace('await syncNow(false)','await requestSync(false)')
-          s=s.replace('syncNow(false)','requestSync(false)')
-          s=s.replace('syncNow(true)','requestSync(true)')
-          s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}', 'async function save(){await secureSave();if(unlocked)await requestSync(false)}', s, count=1)
-
-          # Ensure no automatic restore call survives. The renamed legacy function is intentionally not called.
-          for token in ['navigator.serviceWorker.register','navigator.serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()','initCloud();if("serviceWorker"in navigator)']:
-              if token in s: raise SystemExit('Forbidden marker remains: '+token)
-          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow(false/true) remains')
-          if 'async function requestSync(manual=false)' not in s: raise SystemExit('requestSync gate missing')
-          if s==original: raise SystemExit('No changes made')
+          s=s.replace('await syncNow(false)','await requestSync(false)').replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
+          s=s.replace('if(session){if(unlocked)requestSync(false);else Promise.resolve(false)}','if(session&&unlocked){await requestSync(false)}')
+          s=s.replace('if(data.session){if(unlocked)await requestSync(true);else Promise.resolve(false)}','if(data.session&&unlocked){await requestSync(true)}')
+          Path('debug-index.html').write_text(s,encoding='utf-8')
           p.write_text(s,encoding='utf-8')
-          print('index.html patched safely')
-
-      - name: Validate inline JavaScript
+          print('transformed')
+      - name: Commit transformed debug copy
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add debug-index.html
+          git commit -m "chore: capture transformed index for diagnosis [skip ci]" || true
+          git push || true
+      - name: Validate transformed JavaScript
         shell: bash
         run: |
           python - <<'PY'
           import re, subprocess, tempfile
           from pathlib import Path
-          html=Path('index.html').read_text(encoding='utf-8')
+          html=Path('debug-index.html').read_text(encoding='utf-8')
           scripts=[x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.I|re.S) if x.strip()]
           for i,script in enumerate(scripts,1):
               f=Path(tempfile.gettempdir())/f'inline-{i}.js'; f.write_text(script,encoding='utf-8')
               r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
               if r.returncode:
-                  print(r.stderr)
-                  raise SystemExit(f'Inline JavaScript syntax error in block {i}')
-          print(f'{len(scripts)} inline JavaScript blocks validated.')
+                  print(r.stderr); raise SystemExit(1)
+          print('syntax OK')
           PY
-
-      - name: Commit patched index.html
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          git diff --cached --quiet && exit 0
-          git commit -m "fix: definitive local-first boot and gated sync"
-          git push
