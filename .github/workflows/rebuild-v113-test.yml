@@ -1,0 +1,63 @@
+name: Reconstruir V1.13 de teste
+
+on:
+  push:
+    branches:
+      - revisao-v1.13-filtro-relatorios-clean
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restaurar index da main e aplicar filtro
+        shell: python
+        run: |
+          import subprocess
+          from pathlib import Path
+          import re
+
+          subprocess.run(['git','fetch','origin','main'], check=True)
+          subprocess.run(['git','checkout','origin/main','--','index.html'], check=True)
+          p=Path('index.html')
+          s=p.read_text(encoding='utf-8')
+
+          # Identificação visual inequívoca da cópia de teste.
+          s=s.replace('V1.12','V1.13-TESTE',1)
+
+          old='''<section id="relatorios" class="view">\n<div class="grid" id="reportCards"></div>\n<div class="section card"><h2>📊 Resumo por categoria</h2><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id="catBody"></tbody></table></div></div>\n</section>'''
+          new='''<section id="relatorios" class="view">\n<div class="card">\n<h2>📊 Relatórios</h2>\n<div class="filter">\n<label style="min-width:150px">Período<input id="reportMonth" type="month"></label>\n</div>\n<div class="small">Os valores abaixo consideram somente lançamentos cuja data pertence ao período selecionado.</div>\n</div>\n<div class="grid" id="reportCards"></div>\n<div class="section card"><h2>📊 Resumo por categoria</h2><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id="catBody"></tbody></table></div></div>\n</section>'''
+          if old not in s:
+              raise SystemExit('Secao de relatorios nao encontrada na V1.12; nenhuma alteracao de filtro feita.')
+          s=s.replace(old,new,1)
+
+          pattern=r'(let m=activeData\(\)\.filter\(x=>x\.data\.startsWith\(month\)), en=m\.filter\(x=>x\.tipo===\\"entrada\\"\)\.reduce\(\(s,x\)=>s\+x\.valor,0\), sa=m\.filter\(x=>x\.tipo===\\"saida\\"\)\.reduce\(\(s,x\)=>s\+x\.valor,0\);\n reportCards\.innerHTML=)'
+          if not re.search(pattern,s):
+              raise SystemExit('Bloco de calculo de relatorios nao localizado; nenhuma alteracao feita.')
+
+          oldcalc='''let m=activeData().filter(x=>x.data.startsWith(month)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",activeData().filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0),"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");'''
+          newcalc='''let reportMonthEl=document.getElementById("reportMonth");\n if(reportMonthEl && !reportMonthEl.value)reportMonthEl.value=month;\n let reportPeriod=reportMonthEl?.value||month;\n let m=activeData().filter(x=>x.data.startsWith(reportPeriod)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);\n let pendingPeriod=m.filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",pendingPeriod,"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");'''
+          if oldcalc not in s:
+              raise SystemExit('Calculo exato de relatorios nao localizado; nenhuma alteracao feita.')
+          s=s.replace(oldcalc,newcalc,1)
+
+          oldcat='''let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no mês atual.</td></tr>';'''
+          newcat='''let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no período selecionado.</td></tr>';\n if(reportMonthEl)reportMonthEl.onchange=render;'''
+          if oldcat not in s:
+              raise SystemExit('Resumo por categoria nao localizado; nenhuma alteracao feita.')
+          s=s.replace(oldcat,newcat,1)
+
+          p.write_text(s,encoding='utf-8')
+
+      - name: Commit da copia reconstruida
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet || git commit -m 'fix: reconstruir teste do filtro de periodo a partir da V1.12'
+          git push
