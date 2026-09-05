@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch index.html safely
+      - name: Patch index.html
         shell: python
         run: |
           from pathlib import Path
@@ -17,49 +17,51 @@ jobs:
           p=Path('index.html')
           s=p.read_text(encoding='utf-8')
           original=s
-          s=re.sub(r'initializeSecurity\(\)\.then\(\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.14";queueSync\(\)\}\);', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});', s, count=1)
-          s=re.sub(r'initializeSecurity\(\)\.then\(async\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.15";await initCloud\(\);queueSync\(\)\}\)\.catch\(err=>\{console\.error\("Falha na inicialização de segurança:",err\}\);', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});', s, count=1)
 
-          # Remove automatic restore helper; explicit recoverCloudVault remains.
+          # Bootstrap: local security only. Cloud starts only through requestSync after unlock.
+          patterns=[
+            (r'initializeSecurity\(\)\.then\(\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.14";queueSync\(\)\}\);',
+             'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});'),
+            (r'initializeSecurity\(\)\.then\(async\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.15";await initCloud\(\);queueSync\(\)\}\)\.catch\(err=>\{console\.error\("Falha na inicialização de segurança:",err\}\);',
+             'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});')]
+          for a,b in patterns: s=re.sub(a,b,s,count=1)
+
+          # Remove the automatic restore helper only; explicit recovery remains.
           s=re.sub(r'async function maybeOfferCloudRestore\(\)\{.*?\}', '', s, count=1, flags=re.S)
 
-          # Remove only the legacy SW/early-cloud tail, not the rest of the sync script.
-          marker=';initCloud();if("serviceWorker"in navigator){'
-          if marker in s:
-              i=s.find(marker)
+          # Remove the legacy SW/early-cloud tail without touching the preceding sync code.
+          marker='if("serviceWorker"in navigator){'
+          i=s.find(marker)
+          if i>=0:
+              # The marker is the beginning of the legacy tail and the first following script close ends it.
               j=s.find('</script>',i)
-              if j<0: raise SystemExit('Service Worker tail terminator not found')
-              s=s[:i]+';'+s[j:]
+              if j<0: raise SystemExit('Could not locate script end for legacy Service Worker tail')
+              s=s[:i]+s[j:]
 
-          # Replace the queue with one gated synchronization entry point.
-          old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
-          gateway='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
-          s=s.replace(old_queue,gateway,1)
+          # Replace queueSync with the only synchronization gate.
+          old='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
+          gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
+          if old in s: s=s.replace(old,gate,1)
+
+          # All non-manual and manual sync triggers go through the gate.
           s=s.replace('await syncNow(false)','await requestSync(false)')
           s=s.replace('syncNow(false)','requestSync(false)')
           s=s.replace('syncNow(true)','requestSync(true)')
-          s=s.replace('if(unlocked)requestSync(false);else maybeOfferCloudRestore()','if(unlocked)requestSync(false)')
-          s=s.replace('if(session){if(unlocked)requestSync(false);else maybeOfferCloudRestore()}','if(session&&unlocked){await requestSync(false)}')
+          s=s.replace('if(!newSession)return;if(unlocked)requestSync(false);else maybeOfferCloudRestore()', 'if(!newSession)return;if(unlocked)requestSync(false)')
+          s=s.replace('if(session){if(unlocked)requestSync(false);else maybeOfferCloudRestore()}', 'if(session&&unlocked){await requestSync(false)}')
           s=s.replace('if(!unlocked){const offered=await maybeOfferCloudRestore();msg.textContent=offered?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.":"Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();if(offered)closeSyncModal();return}', 'if(!unlocked){msg.textContent="Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();return}')
-          s=s.replace('if(data.session){if(unlocked)requestSync(true);else maybeOfferCloudRestore()}','if(data.session&&unlocked){await requestSync(true)}')
+          s=s.replace('if(data.session){if(unlocked)await requestSync(true);else maybeOfferCloudRestore()}', 'if(data.session&&unlocked){await requestSync(true)}')
 
-          # If the queue did not exist, insert the gateway before syncNow.
-          if 'async function requestSync(manual=false)' not in s:
-              needle='async function syncNow(manual=false)'
-              if needle not in s: raise SystemExit('syncNow definition not found')
-              s=s.replace(needle,gateway+';'+needle,1)
-
+          # Ensure save() persists locally first and then uses the gate.
           s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}', 'async function save(){await secureSave();if(unlocked)await requestSync(false)}', s, count=1)
 
-          # No Service Worker or cloud initialization is allowed in the boot tail.
-          if 'navigator.serviceWorker.register' in s or 'serviceWorker.addEventListener' in s:
-              raise SystemExit('Service Worker registration remains in index.html')
-          if 'queueSync()' in s:
-              raise SystemExit('queueSync remains in index.html')
-          if 'maybeOfferCloudRestore()' in s:
-              raise SystemExit('automatic cloud restore trigger remains in index.html')
-          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s):
-              raise SystemExit('direct syncNow trigger remains outside requestSync')
+          # Remove every Service Worker registration/controller listener from index.html.
+          s=re.sub(r'if\("serviceWorker"in navigator\)\{.*?\}\s*$', '', s, count=1, flags=re.S)
+          # The previous regex may be unnecessary after tail removal; validate explicit forbidden markers.
+          forbidden=['navigator.serviceWorker.register','serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()']
+          for token in forbidden:
+              if token in s: raise SystemExit('Forbidden bootstrap marker remains: '+token)
+          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow trigger remains outside requestSync')
           if s==original: raise SystemExit('No changes made')
           p.write_text(s,encoding='utf-8')
           print('index.html patched successfully')
@@ -83,7 +85,6 @@ jobs:
           PY
 
       - name: Commit patched index.html
-        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
