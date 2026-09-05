@@ -4,9 +4,9 @@ window.SUPABASE_URL = "https://prrgajnjkknstsaokgwy.supabase.co";
 window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
 
 /* V1.13 — troca de conta.
-   O logout remove o cofre local da sessão e recarrega a aplicação. Assim,
-   os dados da conta anterior não ficam na memória nem permanecem visíveis
-   atrás da tela de login. O cofre remoto continua intacto e criptografado. */
+   Ao sair, a aplicação remove o cofre local da sessão e recarrega a página.
+   Isso garante que os dados e a senha da sessão anterior saiam da memória.
+   O cofre remoto não é apagado. */
 (function () {
   const SECURE_KEY = "controle_financeiro_secure_v1";
   const SWITCH_FLAG = "controle_financeiro_account_switch_pending";
@@ -23,8 +23,13 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
 
     if (title) title.textContent = "Sessão encerrada";
     if (desc) desc.textContent = "Entre com uma conta para acessar seus dados financeiros.";
-    if (button) button.style.display = "none";
-    if (second) { second.style.display = "none"; second.required = false; }
+    /* Mantemos o botão de proteção disponível: depois de entrar em uma conta
+       sem cofre remoto, o usuário poderá criar a proteção deste dispositivo. */
+    if (button) {
+      button.style.display = "block";
+      button.textContent = "Criar proteção neste dispositivo";
+    }
+    if (second) { second.style.display = "block"; second.required = true; }
     if (cloudBtn) {
       cloudBtn.style.display = "block";
       cloudBtn.textContent = "☁️ Entrar / trocar de conta";
@@ -49,11 +54,12 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     async function safeLogout() {
       try { await originalLogout(); } catch (e) {}
 
-      /* Não apagar os dados remotos. Apenas remove o cofre local da sessão. */
+      /* Não apagar os dados remotos. O signOut do Supabase encerra a sessão;
+         aqui removemos somente o cofre local que estava aberto. */
       localStorage.removeItem(SECURE_KEY);
       localStorage.setItem(SWITCH_FLAG, "1");
 
-      /* Recarregar elimina da memória os dados e a senha da sessão anterior. */
+      /* A recarga elimina da memória data/unlocked/__financePassword. */
       location.reload();
     }
 
