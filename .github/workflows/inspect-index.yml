@@ -1,0 +1,29 @@
+name: Inspect V1.12 index
+on:
+  push:
+    branches: [v1.12-fix-work]
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Split index for inspection
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('index.html')
+          text = p.read_text(encoding='utf-8')
+          out = Path('__inspection__')
+          out.mkdir(exist_ok=True)
+          chunk = 12000
+          for i in range(0, len(text), chunk):
+              (out / f'index-part-{i//chunk+1:02d}.txt').write_text(text[i:i+chunk], encoding='utf-8')
+      - name: Commit inspection files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add __inspection__
+          git commit -m 'chore: extrair partes do index para inspeção' || exit 0
+          git push
