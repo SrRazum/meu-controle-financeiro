@@ -37,6 +37,8 @@
   var tries = 0;
   var timer = setInterval(function () {
     tries++;
+    var cloudButton = document.getElementById('lockCloudBtn');
+    if (cloudButton && !window.unlocked) cloudButton.style.display = 'none';
     startCloudAfterUnlock();
     if (started || tries >= 3600) clearInterval(timer);
   }, 100);
