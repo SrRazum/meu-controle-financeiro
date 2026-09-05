@@ -22,37 +22,45 @@ jobs:
           s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
           s=s.replace('initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
 
-          # Remove the exact automatic restore helper; explicit recovery stays available.
-          helper='async function maybeOfferCloudRestore(){if(unlocked)return false;if(localStorage.getItem(SECURE_KEY))return false;if(!__supabase||!__syncReady)return false;try{const {row}=await cloudVaultRow("user_id,updated_at");if(!row)return false;setSecurityMode("restore");return true}catch(e){return false}}'
-          s=s.replace(helper,'',1)
+          # Remove the complete restore helper by boundaries, not by matching braces.
+          a=s.find('async function maybeOfferCloudRestore()')
+          if a>=0:
+              b=s.find('async function pushMerged(',a)
+              if b<0: raise SystemExit('pushMerged boundary not found')
+              s=s[:a]+s[b:]
 
-          # Remove the complete legacy SW tail from its first marker to its script end.
-          marker='if("serviceWorker"in navigator){'
-          i=s.find(marker)
-          if i>=0:
-              j=s.find('</script>',i)
-              if j<0: raise SystemExit('Service Worker script end not found')
-              s=s[:i]+s[j:]
+          # Remove legacy Service Worker registration tail only.
+          a=s.find('if("serviceWorker"in navigator){')
+          if a>=0:
+              b=s.find('</script>',a)
+              if b<0: raise SystemExit('Service Worker script end not found')
+              s=s[:a]+s[b:]
 
-          # Eliminate every legacy queue call/helper, then create one gated sync entry point.
+          # Eliminate the legacy queue helper/calls.
           s=re.sub(r'function queueSync\(\)\{[^}]*\}', '', s, count=1)
           s=s.replace('queueSync()','')
+
+          # Remove all old automatic-restore call fragments.
+          s=s.replace('else maybeOfferCloudRestore()','else {}')
+          s=s.replace('if(!unlocked){const offered=await maybeOfferCloudRestore();msg.textContent=offered?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.":"Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();if(offered)closeSyncModal();return}', 'if(!unlocked){msg.textContent="Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();return}')
+
+          # Single synchronization gateway.
           gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
           if 'async function requestSync(manual=false)' not in s:
               needle='async function syncNow(manual=false)'
               if needle not in s: raise SystemExit('syncNow definition not found')
               s=s.replace(needle,gate+';'+needle,1)
 
-          # All callers use the gate; the gate itself is the sole caller of syncNow with a variable argument.
+          # Route all normal/manual triggers through requestSync.
           s=s.replace('await syncNow(false)','await requestSync(false)')
           s=s.replace('syncNow(false)','requestSync(false)')
           s=s.replace('syncNow(true)','requestSync(true)')
-          s=s.replace('if(!newSession)return;if(unlocked)requestSync(false);else maybeOfferCloudRestore()', 'if(!newSession)return;if(unlocked)requestSync(false)')
-          s=s.replace('if(session){if(unlocked)requestSync(false);else maybeOfferCloudRestore()}', 'if(session&&unlocked){await requestSync(false)}')
-          s=s.replace('if(!unlocked){const offered=await maybeOfferCloudRestore();msg.textContent=offered?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.":"Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();if(offered)closeSyncModal();return}', 'if(!unlocked){msg.textContent="Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();return}')
-          s=s.replace('if(data.session){if(unlocked)await requestSync(true);else maybeOfferCloudRestore()}', 'if(data.session&&unlocked){await requestSync(true)}')
+          s=s.replace('if(unlocked)requestSync(false);else {}','if(unlocked)requestSync(false)')
+          s=s.replace('if(session){if(unlocked)requestSync(false);else {} }','if(session&&unlocked){await requestSync(false)}')
+          s=s.replace('if(data.session){if(unlocked)await requestSync(true);else {} }','if(data.session&&unlocked){await requestSync(true)}')
           s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}', 'async function save(){await secureSave();if(unlocked)await requestSync(false)}', s, count=1)
 
+          # Strong invariants.
           for token in ['navigator.serviceWorker.register','serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()']:
               if token in s: raise SystemExit('Forbidden marker remains: '+token)
           if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow trigger remains outside requestSync')
@@ -84,5 +92,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.html
           git diff --cached --quiet && exit 0
-          git commit -m "fix: local-first index boot and single sync gate"
+          git commit -m "fix: local-first boot and single gated sync"
           git push
