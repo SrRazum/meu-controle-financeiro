@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch index.html
+      - name: Patch index.html safely
         shell: python
         run: |
           from pathlib import Path
@@ -17,78 +17,52 @@ jobs:
           p=Path('index.html')
           s=p.read_text(encoding='utf-8')
           original=s
+          s=re.sub(r'initializeSecurity\(\)\.then\(\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.14";queueSync\(\)\}\);', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});', s, count=1)
+          s=re.sub(r'initializeSecurity\(\)\.then\(async\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.15";await initCloud\(\);queueSync\(\)\}\)\.catch\(err=>\{console\.error\("Falha na inicialização de segurança:",err\}\);', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});', s, count=1)
 
-          # 1) Local security is the only startup action. Never sync from boot.
-          s,n=re.subn(
-              r'initializeSecurity\(\)\.then\(\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.14";queueSync\(\)\}\);',
-              'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',
-              s,count=1)
-          if n==0:
-              # Accept the already-repaired V1.15/V1.16 startup and strip any sync from it.
-              s=re.sub(r'initializeSecurity\(\)\.then\(async\(\)=>\{const v=document\.getElementById\("appVersion"\);if\(v\)v\.textContent="V1\.15";await initCloud\(\);queueSync\(\)\}\)\.catch\(err=>\{console\.error\("Falha na inicialização de segurança:",err\}\);',
-                       'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',s,count=1)
+          # Remove automatic restore helper; explicit recoverCloudVault remains.
+          s=re.sub(r'async function maybeOfferCloudRestore\(\)\{.*?\}', '', s, count=1, flags=re.S)
 
-          # 2) Remove the old independent cloud + Service Worker registration block.
-          marker='initCloud();if("serviceWorker"in navigator){'
+          # Remove only the legacy SW/early-cloud tail, not the rest of the sync script.
+          marker=';initCloud();if("serviceWorker"in navigator){'
           if marker in s:
               i=s.find(marker)
               j=s.find('</script>',i)
-              if j<0: raise SystemExit('Could not find script closing tag after legacy bootstrap')
-              s=s[:i]+s[j:]
+              if j<0: raise SystemExit('Service Worker tail terminator not found')
+              s=s[:i]+';'+s[j:]
 
-          # 3) Remove automatic cloud restore from auth/session initialization.
-          s=s.replace('if(!newSession)return;if(unlocked)syncNow(false);else maybeOfferCloudRestore()',
-                      'if(!newSession)return;if(unlocked)requestSync(false)')
-          s=s.replace('if(session){if(unlocked)await syncNow(false);else await maybeOfferCloudRestore()}',
-                      'if(session&&unlocked){await requestSync(false)}')
-          s=s.replace('if(!unlocked){const offered=await maybeOfferCloudRestore();msg.textContent=offered?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.":"Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();if(offered)closeSyncModal();return}',
-                      'if(!unlocked){msg.textContent="Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();return}')
-          s=s.replace('if(data.session){if(unlocked)await syncNow(true);else await maybeOfferCloudRestore()}',
-                      'if(data.session&&unlocked){await requestSync(true)}')
+          # Replace the queue with one gated synchronization entry point.
+          old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
+          gateway='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
+          s=s.replace(old_queue,gateway,1)
+          s=s.replace('await syncNow(false)','await requestSync(false)')
+          s=s.replace('syncNow(false)','requestSync(false)')
+          s=s.replace('syncNow(true)','requestSync(true)')
+          s=s.replace('if(unlocked)requestSync(false);else maybeOfferCloudRestore()','if(unlocked)requestSync(false)')
+          s=s.replace('if(session){if(unlocked)requestSync(false);else maybeOfferCloudRestore()}','if(session&&unlocked){await requestSync(false)}')
+          s=s.replace('if(!unlocked){const offered=await maybeOfferCloudRestore();msg.textContent=offered?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.":"Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();if(offered)closeSyncModal();return}', 'if(!unlocked){msg.textContent="Conta conectada. Desbloqueie o aplicativo para sincronizar.";refreshSyncUI();return}')
+          s=s.replace('if(data.session){if(unlocked)requestSync(true);else maybeOfferCloudRestore()}','if(data.session&&unlocked){await requestSync(true)}')
 
-          # 4) Make requestSync the only public/internal gateway that may call syncNow.
-          s=s.replace('function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}',
-                      'async function requestSync(manual=false){if(!unlocked)return;if(typeof initCloud!=="function")return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}')
-          s=s.replace('await syncNow(false)', 'await requestSync(false)')
-          s=s.replace('syncNow(false)', 'requestSync(false)')
-          s=s.replace('syncNow(true)', 'requestSync(true)')
-          # Restore the syncNow function name if the broad replacement touched its declaration/body.
-          s=s.replace('async function requestSync(manual=false){const msg=', 'async function syncNow(manual=false){const msg=')
-
-          # The single gateway must be defined before any event can invoke it.
+          # If the queue did not exist, insert the gateway before syncNow.
           if 'async function requestSync(manual=false)' not in s:
-              # Insert gateway immediately before the sync function.
               needle='async function syncNow(manual=false)'
-              gateway='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
               if needle not in s: raise SystemExit('syncNow definition not found')
               s=s.replace(needle,gateway+';'+needle,1)
 
-          # save() must persist locally first; sync is explicitly routed through requestSync.
-          s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}',
-                   'async function save(){await secureSave();if(unlocked)await requestSync(false)}',s,count=1)
+          s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}', 'async function save(){await secureSave();if(unlocked)await requestSync(false)}', s, count=1)
 
-          # Unlock/setup/restore may request sync only after unlocked is true.
-          s=s.replace('resetInactivity();queueSync();return}', 'resetInactivity();requestSync(false);return}')
-          s=s.replace('hideLock();render();resetInactivity();queueSync()}catch', 'hideLock();render();resetInactivity();requestSync(false)}catch')
-          s=s.replace('hideLock();render();resetInactivity();queueSync()}', 'hideLock();render();resetInactivity();requestSync(false)}')
-          s=s.replace('if(unlocked)syncNow(false)', 'if(unlocked)requestSync(false)')
-
-          # 5) No Service Worker registration/controller reload in index.html.
-          s=re.sub(r'if\("serviceWorker"in navigator\)\{window\.addEventListener\("load",async\(\)=>\{.*?\}\)\}function showUpdateNotice.*?if\("serviceWorker"in navigator\)\{navigator\.serviceWorker\.addEventListener\("controllerchange",\(\)=>location\.reload\(\)\)\}', '', s, count=1, flags=re.S)
-
-          # 6) Never auto-offer cloud restore from boot. Keep explicit recovery function intact.
-          s=re.sub(r'async function maybeOfferCloudRestore\(\).*?\n', '', s, count=1, flags=re.S)
-
-          if 'initCloud();' in s or 'navigator.serviceWorker.register' in s:
-              raise SystemExit('Unsafe boot marker remains in index.html')
-          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s):
-              raise SystemExit('Direct syncNow call remains outside the gateway')
+          # No Service Worker or cloud initialization is allowed in the boot tail.
+          if 'navigator.serviceWorker.register' in s or 'serviceWorker.addEventListener' in s:
+              raise SystemExit('Service Worker registration remains in index.html')
           if 'queueSync()' in s:
-              raise SystemExit('Legacy queueSync call remains')
-          if s==original:
-              raise SystemExit('No changes made')
+              raise SystemExit('queueSync remains in index.html')
+          if 'maybeOfferCloudRestore()' in s:
+              raise SystemExit('automatic cloud restore trigger remains in index.html')
+          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s):
+              raise SystemExit('direct syncNow trigger remains outside requestSync')
+          if s==original: raise SystemExit('No changes made')
           p.write_text(s,encoding='utf-8')
-          print('Definitive index boot/sync patch applied.')
+          print('index.html patched successfully')
 
       - name: Validate inline JavaScript
         shell: bash
@@ -108,12 +82,12 @@ jobs:
           print(f'{len(scripts)} inline JavaScript blocks validated.')
           PY
 
-      - name: Commit definitive fix
+      - name: Commit patched index.html
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.html
           git diff --cached --quiet && exit 0
-          git commit -m "fix: make index boot local-first and sync gated"
+          git commit -m "fix: local-first index boot and gated cloud sync"
           git push
