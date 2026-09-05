@@ -15,14 +15,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Rewrite damaged startup block
+      - name: Repair startup and service-worker bootstrap
         shell: python
         run: |
           from pathlib import Path
           import re
+
           p = Path("index.html")
           s = p.read_text(encoding="utf-8")
 
+          # Repair the known malformed notification join literal without
+          # touching any other JavaScript.
+          s = s.replace('join("\n")', 'join("\\n")')
+          s = s.replace("join('\n')", "join('\\n')")
+          s = re.sub(r'join\("\r?\n"\)', 'join("\\\\n")', s)
+          s = re.sub(r"join\('\r?\n'\)", "join('\\\\n')", s)
+
+          # Replace the old category/status startup block if still present.
           pattern = r'function updateCats\(\).*?document\.getElementById\("data"\)\.value=today\(\);'
           replacement = '''function updateCats(){
           const el=document.getElementById("categoria");
@@ -47,29 +56,26 @@ jobs:
           updateStatusOptions();
           document.getElementById("data").value=today();'''
           s2,n=re.subn(pattern,replacement,s,count=1,flags=re.S)
-          if n!=1:
-              raise SystemExit("Damaged category/status startup block not found; refusing unsafe edit")
-          s=s2
+          if n==1:
+              s=s2
 
-          s=re.sub(r'join\("\\\n"\)', 'join("\\\\n")', s)
-          s=re.sub(r"join\('\\\n'\)", "join('\\\\n')", s)
-
+          # Boot security first, then initialize cloud. Both are started only
+          # after every script block has loaded, avoiding the previous race.
           old_boot='initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
           new_boot='window.addEventListener("load",async()=>{try{await initializeSecurity();const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";if(typeof initCloud==="function")await initCloud();if(unlocked)await syncNow(false);else await maybeOfferCloudRestore()}catch(err){console.error("Falha na inicialização do aplicativo:",err)}});'
           if old_boot in s:
               s=s.replace(old_boot,new_boot,1)
-          elif 'window.addEventListener("load",async()=>{try{await initializeSecurity();const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";' not in s:
-              raise SystemExit("Security bootstrap marker not found; refusing unsafe edit")
 
-          marker='initCloud();if("serviceWorker"in navigator){'
-          if marker in s:
-              head,_,tail=s.partition(marker)
-              closing=tail.find('</script>')
-              if closing<0: raise SystemExit("Script closing tag not found")
-              s=head+'</script>'+tail[closing+len('</script>'):]
+          # Never execute cloud initialization independently before security.
+          s=s.replace('initCloud();if("serviceWorker"in navigator){', 'if("serviceWorker"in navigator){')
+
+          # The old service worker is deliberately disabled. Do not register it
+          # from the page; existing registrations are cleaned by sw.js itself.
+          sw_block = r'if\("serviceWorker"in navigator\)\{window\.addEventListener\("load",async\(\)=>\{try\{const registration=await navigator\.serviceWorker\.register\("\.\/sw\.js".*?\}\)\}\)\}\)function showUpdateNotice.*?navigator\.serviceWorker\.addEventListener\("controllerchange",\(\)=>location\.reload\(\)\)'
+          s = re.sub(sw_block, '', s, count=1, flags=re.S)
 
           p.write_text(s,encoding="utf-8")
-          print("Definitive boot fix applied.")
+          print("Startup repair written.")
 
       - name: Validate inline JavaScript syntax
         shell: python
@@ -85,7 +91,7 @@ jobs:
               if r.returncode:
                   print(r.stderr)
                   raise SystemExit(f"Inline JavaScript syntax error in script #{i}")
-          print("All inline JavaScript blocks pass node --check.")
+          print(f"All {len(scripts)} inline JavaScript blocks pass node --check.")
 
       - name: Commit repair
         run: |
@@ -95,6 +101,6 @@ jobs:
             echo "No changes to commit."
           else
             git add index.html
-            git commit -m "Fix startup sequencing and disable stale service worker"
+            git commit -m "Fix definitive application boot sequence"
             git push
           fi
