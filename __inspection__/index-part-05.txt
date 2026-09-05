@@ -1,0 +1,145 @@
+).insert({user_id:user.id,payload});
+     if(error)throw error;
+     __cloudMismatch=false;setRecoverVisible(false);setSyncState("ok");
+     if(manual&&msg){msg.textContent="Sincronização concluída.";refreshSyncUI()}
+     return;
+   }
+   const res=await decryptVault(window.__financePassword,row.payload);
+   if(!res.ok){
+     /* Sem sobrescrever nem apagar: o cofre remoto fica intacto e o usuario
+        recebe o caminho de recuperacao com a senha de protecao anterior. */
+     __cloudMismatch=true;setRecoverVisible(true);setSyncState("err");
+     if(msg){
+       msg.textContent=res.reason==="format"
+         ?"Os dados guardados na nuvem estão em um formato que esta versão não reconhece. Nada foi apagado nem sobrescrito."
+         :"Os lançamentos já guardados na nuvem foram protegidos com outra senha de proteção. Informe abaixo a senha anterior para uni-los — nada será apagado.";
+     }
+     refreshSyncUI();
+     return;
+   }
+   __cloudMismatch=false;setRecoverVisible(false);
+   await pushMerged(user,res.value);
+   setSyncState("ok");
+   if(manual&&msg){msg.textContent="Sincronização concluída.";refreshSyncUI()}
+ }catch(e){
+   setSyncState("err");
+   if(manual&&msg)msg.textContent="Não foi possível sincronizar. "+syncErrorText(e);
+ }finally{__syncBusy=false}
+}
+/* Recuperacao nao destrutiva: so grava depois de descriptografar com exito o
+   cofre remoto usando a senha de protecao anterior informada pelo usuario. */
+async function recoverCloudVault(){
+ const input=document.getElementById("syncRecoverPassword");
+ const msg=document.getElementById("syncMsg");
+ if(!__supabase||!__syncReady){msg.textContent="Entre na sua conta primeiro.";return}
+ if(!unlocked){msg.textContent="Desbloqueie o aplicativo antes de unir os dados.";return}
+ const previous=input?input.value:"";
+ if(!previous){msg.textContent="Informe a senha de proteção usada anteriormente.";return}
+ if(__syncBusy)return;
+ __syncBusy=true;setSyncState("busy");msg.textContent="Verificando a senha informada...";
+ try{
+   const {user,row}=await cloudVaultRow("payload");
+   if(!row){
+     __cloudMismatch=false;setRecoverVisible(false);setSyncState("ok");
+     msg.textContent="Não há dados na nuvem para unir.";
+     return;
+   }
+   const res=await decryptVault(previous,row.payload);
+   if(!res.ok){
+     setSyncState("err");
+     msg.textContent=res.reason==="format"
+       ?"Os dados da nuvem estão em um formato não reconhecido. Nada foi alterado."
+       :"A senha informada não abre os dados guardados na nuvem. Nada foi alterado.";
+     return;
+   }
+   await pushMerged(user,res.value);
+   __cloudMismatch=false;setRecoverVisible(false);setSyncState("ok");
+   msg.textContent="Dados da nuvem unidos e reprotegidos com a senha de proteção atual deste dispositivo.";
+ }catch(e){
+   setSyncState("err");
+   msg.textContent="Não foi possível unir os dados agora. "+syncErrorText(e);
+ }finally{
+   if(input)input.value="";
+   __syncBusy=false;refreshSyncUI();
+ }
+}
+const TOMBSTONE_TTL_MS=180*24*60*60*1000;
+function stampRecord(x){if(x&&typeof x==="object")x.updatedAt=new Date().toISOString();return x}
+function recordTime(x){
+ if(!x)return 0;
+ const t=Date.parse((x.deleted?x.deletedAt:x.updatedAt)||"");
+ return isNaN(t)?0:t;
+}
+function mergeRecords(a,b){
+ /* Marcas de exclusao antigas sao descartadas antes da uniao para que o
+    conjunto nao cresca sem limite. */
+ const limit=Date.now()-TOMBSTONE_TTL_MS;
+ const vigente=x=>{
+   if(!x||!x.id)return false;
+   if(!x.deleted)return true;
+   const t=Date.parse(x.deletedAt||"");
+   return isNaN(t)?true:t>=limit;
+ };
+ const map=new Map();
+ const removed=new Map();
+ [...b,...a].filter(vigente).forEach(x=>{
+   if(x.deleted){
+     removed.set(x.id,{id:x.id,deleted:true,deletedAt:x.deletedAt||new Date().toISOString()});
+     return;
+   }
+   /* Entre duas versoes do mesmo lancamento vence a alteracao mais recente;
+      sem data de alteracao (dados antigos) fica a versao deste dispositivo. */
+   const cur=map.get(x.id);
+   if(!cur||recordTime(x)>=recordTime(cur))map.set(x.id,x);
+ });
+ /* Uma exclusao vigente sempre vence o registro vivo. */
+ removed.forEach((v,k)=>map.set(k,v));
+ return Array.from(map.values());
+}
+window.addEventListener("online",()=>{if(unlocked)syncNow(false)});
+
+// Supabase is initialized only when the user opens the synchronization UI.
+
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      const registration = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+      if (registration.waiting) {
+        showUpdateNotice(registration);
+      }
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) {
+            showUpdateNotice(registration);
+          }
+        });
+      });
+    } catch (err) {
+      console.warn("Service Worker não pôde ser registrado:", err);
+    }
+  });
+}
+function showUpdateNotice(registration) {
+  if (document.getElementById("updateNotice")) return;
+  const box=document.createElement("div");
+  box.id="updateNotice";
+  box.style.cssText="position:fixed;left:14px;right:14px;bottom:78px;z-index:90;background:#fff;border:1px solid #ddd;border-radius:12px;padding:12px 14px;box-shadow:0 8px 30px #0002;display:flex;gap:10px;align-items:center;justify-content:space-between;font-size:13px";
+  box.innerHTML='<span>🔄 Há uma nova versão disponível.</span><button class="primary" style="padding:8px 12px" onclick="applyUpdate()">Atualizar</button>';
+  document.body.appendChild(box);
+  window.__pendingSW=registration.waiting;
+}
+async function applyUpdate(){
+  const sw=window.__pendingSW;
+  if(sw) sw.postMessage({type:"SKIP_WAITING"});
+  else location.reload();
+}
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("controllerchange", () => location.reload());
+}
+
+</script>
+</body>
+</html>
