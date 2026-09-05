@@ -18,32 +18,32 @@ jobs:
           s=p.read_text(encoding='utf-8')
           original=s
 
-          # Replace the old startup promise with local-security-only startup.
-          old='initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
-          new='initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});'
-          s=s.replace(old,new,1)
-          old15='initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});'
-          s=s.replace(old15,new,1)
+          # Local security is the only boot operation.
+          s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
+          s=s.replace('initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});', 'initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
 
-          # Remove the exact automatic restore helper without a greedy brace regex.
+          # Remove the exact automatic restore helper; explicit recovery stays available.
           helper='async function maybeOfferCloudRestore(){if(unlocked)return false;if(localStorage.getItem(SECURE_KEY))return false;if(!__supabase||!__syncReady)return false;try{const {row}=await cloudVaultRow("user_id,updated_at");if(!row)return false;setSecurityMode("restore");return true}catch(e){return false}}'
           s=s.replace(helper,'',1)
 
-          # Remove the legacy Service Worker registration tail only.
+          # Remove the complete legacy SW tail from its first marker to its script end.
           marker='if("serviceWorker"in navigator){'
           i=s.find(marker)
           if i>=0:
               j=s.find('</script>',i)
-              if j<0: raise SystemExit('Service Worker script terminator not found')
+              if j<0: raise SystemExit('Service Worker script end not found')
               s=s[:i]+s[j:]
 
-          # Replace the legacy queue helper with a single gate.
-          old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
+          # Eliminate every legacy queue call/helper, then create one gated sync entry point.
+          s=re.sub(r'function queueSync\(\)\{[^}]*\}', '', s, count=1)
+          s=s.replace('queueSync()','')
           gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
-          if old_queue in s: s=s.replace(old_queue,gate,1)
-          else: s=s.replace('queueSync()','',1)
+          if 'async function requestSync(manual=false)' not in s:
+              needle='async function syncNow(manual=false)'
+              if needle not in s: raise SystemExit('syncNow definition not found')
+              s=s.replace(needle,gate+';'+needle,1)
 
-          # Gate every existing automatic/manual trigger and eliminate restore-before-unlock paths.
+          # All callers use the gate; the gate itself is the sole caller of syncNow with a variable argument.
           s=s.replace('await syncNow(false)','await requestSync(false)')
           s=s.replace('syncNow(false)','requestSync(false)')
           s=s.replace('syncNow(true)','requestSync(true)')
@@ -53,11 +53,9 @@ jobs:
           s=s.replace('if(data.session){if(unlocked)await requestSync(true);else maybeOfferCloudRestore()}', 'if(data.session&&unlocked){await requestSync(true)}')
           s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}', 'async function save(){await secureSave();if(unlocked)await requestSync(false)}', s, count=1)
 
-          # No Service Worker registration, restore trigger or legacy queue remains in index.html.
           for token in ['navigator.serviceWorker.register','serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()']:
               if token in s: raise SystemExit('Forbidden marker remains: '+token)
           if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow trigger remains outside requestSync')
-          if 'initCloud();if("serviceWorker"in navigator)' in s: raise SystemExit('Legacy cloud/SW bootstrap remains')
           if s==original: raise SystemExit('No changes made')
           p.write_text(s,encoding='utf-8')
           print('index.html patched successfully')
