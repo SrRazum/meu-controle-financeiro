@@ -3,31 +3,17 @@
 window.SUPABASE_URL = "https://prrgajnjkknstsaokgwy.supabase.co";
 window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
 
-/*
- * Compatibilidade com versões em cache.
- *
- * O estado principal do aplicativo usa um binding lexical `let unlocked`.
- * Se uma versão antiga/em cache do index.html não carregar esse binding,
- * as rotinas de sincronização ainda precisam ter um estado global seguro
- * para não gerar "unlocked is not defined".
- *
- * Quando a versão atual do index.html é carregada, ela continua usando seu
- * próprio `let unlocked`; esta propriedade serve apenas como fallback para
- * versões parcialmente carregadas ou em cache.
- */
+// Fallback para versões parcialmente carregadas/em cache.
 if (typeof window.unlocked === "undefined") window.unlocked = false;
 
 /*
- * Correção de inicialização da sincronização.
- *
- * O index.html carrega o config.js ANTES da biblioteca supabase-js e chama
- * initCloud() no final do documento. Se a biblioteca ainda não estiver
- * disponível naquele instante, a primeira inicialização falha e __supabase
- * permanece nulo. O botão "Entrar", por sua vez, tentava usar esse cliente
- * nulo e o clique terminava sem mensagem útil.
- *
- * Este bootstrap espera a biblioteca e o initCloud do aplicativo ficarem
- * disponíveis, executa a inicialização novamente e só então envolve o login.
+ * Bootstrap do Supabase e correção do login.
+ * O login não chama a implementação antiga de syncLogin, pois ela depende
+ * do binding lexical `unlocked` do index.html. Isso causava o erro
+ * "unlocked is not defined" em versões parcialmente atualizadas do app.
+ * Após autenticar, apenas verificamos se existem dados na nuvem e, havendo,
+ * colocamos a tela de proteção no modo de restauração. A senha dos dados
+ * continua sendo a senha de proteção do aplicativo, não a senha da conta.
  */
 (function(){
   let booted=false;
@@ -53,29 +39,68 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     }
   }
 
+  async function login(){
+    if(!window.SUPABASE_URL || !window.SUPABASE_PUBLISHABLE_KEY){
+      message("Configure primeiro o acesso ao serviço de sincronização.");
+      return;
+    }
+    const email=(document.getElementById("syncEmail")?.value||"").trim();
+    const password=document.getElementById("syncPassword")?.value||"";
+    if(!email || !password){
+      message("Informe e-mail e senha.");
+      return;
+    }
+
+    message("Conectando ao serviço de sincronização...");
+    const ok=await bootCloud();
+    if(!ok){
+      message("Não foi possível iniciar a sincronização. Atualize a página e tente novamente.");
+      return;
+    }
+
+    try{
+      // Usa o cliente já criado por initCloud, quando disponível.
+      const client=window.__syncClient || null;
+      let result;
+      if(client){
+        result=await client.auth.signInWithPassword({email,password});
+      }else if(window.supabase && typeof window.supabase.createClient==="function"){
+        const fallback=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_PUBLISHABLE_KEY,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}});
+        result=await fallback.auth.signInWithPassword({email,password});
+      }else{
+        throw new Error("Cliente de autenticação indisponível.");
+      }
+      if(result.error) throw result.error;
+
+      document.getElementById("syncPassword").value="";
+      message("Conta conectada. Verificando os dados guardados na nuvem...");
+
+      // Se a implementação principal estiver disponível, ela possui o cliente
+      // lexical já autenticado. cloudFetchVault é usado apenas para decidir se
+      // há dados a restaurar; não baixamos nem alteramos nada nesta etapa.
+      let hasCloud=false;
+      if(typeof window.cloudFetchVault==="function"){
+        try{ hasCloud=!!(await window.cloudFetchVault()); }catch(e){ console.warn("Verificação da nuvem:",e); }
+      }
+
+      if(hasCloud && typeof window.setSecurityMode==="function"){
+        window.setSecurityMode("restore");
+        if(typeof window.closeSyncModal==="function") window.closeSyncModal();
+        const lockMsg=document.getElementById("lockMsg");
+        if(lockMsg) lockMsg.textContent="Conta conectada. Digite a senha de proteção usada neste aplicativo para restaurar os lançamentos.";
+      }else{
+        message("Conta conectada. Nenhum lançamento foi encontrado na nuvem para esta conta.");
+        if(typeof window.refreshSyncUI==="function") window.refreshSyncUI();
+      }
+    }catch(e){
+      console.error("Erro no login da sincronização:",e);
+      message(e&&e.message ? e.message : "Não foi possível entrar. Verifique os dados da conta.");
+    }
+  }
+
   function wrapLogin(){
     if(wrapped || typeof window.syncLogin!=="function") return false;
-    const original=window.syncLogin;
-    window.syncLogin=async function(){
-      const email=(document.getElementById("syncEmail")?.value||"").trim();
-      const password=document.getElementById("syncPassword")?.value||"";
-      if(!email || !password){
-        message("Informe e-mail e senha.");
-        return;
-      }
-      message("Conectando ao serviço de sincronização...");
-      const ok=await bootCloud();
-      if(!ok){
-        message("Não foi possível iniciar a sincronização. Atualize a página e tente novamente.");
-        return;
-      }
-      try{
-        await original();
-      }catch(e){
-        console.error("Erro no login da sincronização:",e);
-        message(e&&e.message ? e.message : "Não foi possível entrar. Verifique os dados da conta.");
-      }
-    };
+    window.syncLogin=login;
     wrapped=true;
     return true;
   }
@@ -85,12 +110,8 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     if(!booted && window.supabase && typeof window.initCloud==="function") bootCloud();
     wrapLogin();
     if((!booted || !wrapped) && attempts<200) setTimeout(tick,100);
-    else if(!booted && attempts>=200) console.warn("Supabase não ficou disponível após 20 segundos.");
   }
 
-  if(document.readyState==="loading"){
-    document.addEventListener("DOMContentLoaded",tick,{once:true});
-  }else{
-    tick();
-  }
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",tick,{once:true});
+  else tick();
 })();
