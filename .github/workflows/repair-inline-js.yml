@@ -15,85 +15,83 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Repair startup and service-worker bootstrap
+      - name: Repair JavaScript startup and boot order
         shell: python
         run: |
           from pathlib import Path
           import re
+          p=Path("index.html")
+          s=p.read_text(encoding="utf-8")
 
-          p = Path("index.html")
-          s = p.read_text(encoding="utf-8")
-
-          # Repair the known malformed notification join literal without
-          # touching any other JavaScript.
-          s = s.replace('join("\n")', 'join("\\n")')
-          s = s.replace("join('\n')", "join('\\n')")
-          s = re.sub(r'join\("\r?\n"\)', 'join("\\\\n")', s)
-          s = re.sub(r"join\('\r?\n'\)", "join('\\\\n')", s)
-
-          # Replace the old category/status startup block if still present.
-          pattern = r'function updateCats\(\).*?document\.getElementById\("data"\)\.value=today\(\);'
-          replacement = '''function updateCats(){
-          const el=document.getElementById("categoria");
-          const tipoEl=document.getElementById("tipo");
-          if(!el||!tipoEl)return;
-          const old=el.value;
-          el.innerHTML=(cats[tipoEl.value]||[]).map(x=>`<option>${x}</option>`).join("");
-          if((cats[tipoEl.value]||[]).includes(old))el.value=old;
+          # Replace the complete notifications/bootstrap tail. This avoids
+          # carrying forward the malformed string literal that caused the
+          # browser parser to stop at the end of the first script block.
+          start=s.find('function notifications(){')
+          end=s.find('</script>', start)
+          if start<0 or end<0:
+              raise SystemExit('Notification/bootstrap block not found; refusing unsafe edit')
+          clean='''function notifications(){
+          let p={"7":true,"3":true,"1":true,"0":true,"over":true};
+          try{p=JSON.parse(localStorage.getItem(PREF)||JSON.stringify(p))}catch(e){}
+          const msgs=[];
+          activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{
+            const n=daysUntil(x.vencimento);
+            if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over)){
+              msgs.push(`${x.descricao}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`);
+            }
+          });
+          if(msgs.length&&"Notification"in window&&Notification.permission==="granted"){
+            try{new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\\n")})}catch(e){}
           }
-          function updateStatusOptions(){
-          const s=document.getElementById("status");
-          const tipoEl=document.getElementById("tipo");
-          if(!s||!tipoEl)return;
-          const old=s.value;
-          const entrada=tipoEl.value==="entrada";
-          s.innerHTML=entrada?'<option value="pago">Recebido</option><option value="pendente">Pendente</option>':'<option value="pago">Pago</option><option value="pendente">Pendente</option>';
-          s.value=old==="pendente"?"pendente":"pago";
           }
-          const tipoEl=document.getElementById("tipo");
-          if(tipoEl)tipoEl.addEventListener("change",()=>{updateCats();updateStatusOptions()});
-          updateCats();
-          updateStatusOptions();
-          document.getElementById("data").value=today();'''
-          s2,n=re.subn(pattern,replacement,s,count=1,flags=re.S)
-          if n==1:
-              s=s2
+          if("Notification"in window&&Notification.permission==="default")Notification.requestPermission().catch(()=>{});
+          window.addEventListener("load",async()=>{
+            try{
+              await initializeSecurity();
+              const v=document.getElementById("appVersion");
+              if(v)v.textContent="V1.15";
+              if(typeof initCloud==="function")await initCloud();
+              if(unlocked)await syncNow(false);
+              else await maybeOfferCloudRestore();
+            }catch(err){console.error("Falha na inicialização do aplicativo:",err)}
+          });
+          '''
+          s=s[:start]+clean+s[end:]
 
-          # Boot security first, then initialize cloud. Both are started only
-          # after every script block has loaded, avoiding the previous race.
-          old_boot='initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
-          new_boot='window.addEventListener("load",async()=>{try{await initializeSecurity();const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";if(typeof initCloud==="function")await initCloud();if(unlocked)await syncNow(false);else await maybeOfferCloudRestore()}catch(err){console.error("Falha na inicialização do aplicativo:",err)}});'
-          if old_boot in s:
-              s=s.replace(old_boot,new_boot,1)
+          # Do not initialize cloud before security has finished.
+          s=s.replace('initCloud();if("serviceWorker"in navigator){','if("serviceWorker"in navigator){')
 
-          # Never execute cloud initialization independently before security.
-          s=s.replace('initCloud();if("serviceWorker"in navigator){', 'if("serviceWorker"in navigator){')
-
-          # The old service worker is deliberately disabled. Do not register it
-          # from the page; existing registrations are cleaned by sw.js itself.
-          sw_block = r'if\("serviceWorker"in navigator\)\{window\.addEventListener\("load",async\(\)=>\{try\{const registration=await navigator\.serviceWorker\.register\("\.\/sw\.js".*?\}\)\}\)\}\)function showUpdateNotice.*?navigator\.serviceWorker\.addEventListener\("controllerchange",\(\)=>location\.reload\(\)\)'
-          s = re.sub(sw_block, '', s, count=1, flags=re.S)
+          # Do not register the obsolete service worker from index.html.
+          marker='if("serviceWorker"in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./sw.js"'
+          m=s.find(marker)
+          if m>=0:
+              # Remove the complete legacy SW/update block up to the end of
+              # the second script, preserving the closing script tag.
+              close=s.find('</script>',m)
+              if close<0: raise SystemExit('SW script closing tag not found')
+              s=s[:m]+s[close:]
 
           p.write_text(s,encoding="utf-8")
-          print("Startup repair written.")
+          print('Boot repair written.')
 
-      - name: Validate inline JavaScript syntax
+      - name: Validate every inline JavaScript block
         shell: python
         run: |
           import re, subprocess, tempfile
           from pathlib import Path
-          html=Path("index.html").read_text(encoding="utf-8")
-          scripts=[x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.I|re.S) if x.strip()]
+          html=Path('index.html').read_text(encoding='utf-8')
+          scripts=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.I|re.S)
+          if not scripts: raise SystemExit('No inline scripts found')
           for i,script in enumerate(scripts,1):
-              f=Path(tempfile.gettempdir())/f"inline-{i}.js"
-              f.write_text(script,encoding="utf-8")
-              r=subprocess.run(["node","--check",str(f)],capture_output=True,text=True)
+              f=Path(tempfile.gettempdir())/f'inline-{i}.js'
+              f.write_text(script,encoding='utf-8')
+              r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
               if r.returncode:
                   print(r.stderr)
-                  raise SystemExit(f"Inline JavaScript syntax error in script #{i}")
-          print(f"All {len(scripts)} inline JavaScript blocks pass node --check.")
+                  raise SystemExit(f'Inline JavaScript syntax error in script #{i}')
+          print(f'All {len(scripts)} inline JavaScript blocks pass node --check.')
 
-      - name: Commit repair
+      - name: Commit repaired application
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -101,6 +99,6 @@ jobs:
             echo "No changes to commit."
           else
             git add index.html
-            git commit -m "Fix definitive application boot sequence"
+            git commit -m "Repair malformed boot script and startup order"
             git push
           fi
