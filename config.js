@@ -1,10 +1,11 @@
 // Configuração segura do Meu Controle Financeiro.
-// A conexão com a nuvem só é inicializada DEPOIS que o aplicativo for
-// desbloqueado/criado. Isso impede que uma sessão Supabase existente
-// altere a tela de segurança durante o boot e elimina o ciclo
-// proteção -> restauração -> proteção.
+// A nuvem NÃO é inicializada durante o boot. O aplicativo primeiro
+// estabelece/desbloqueia a proteção local e somente depois dispara
+// o evento finance:unlocked. Isso evita o ciclo proteção -> nuvem -> restauração.
 (function () {
   'use strict';
+
+  // Limpa Service Workers e caches antigos deixados por versões anteriores.
   try {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function (regs) {
@@ -34,12 +35,9 @@
     try { window.initCloud(); } catch (_) {}
   }
 
-  var tries = 0;
-  var timer = setInterval(function () {
-    tries++;
-    var cloudButton = document.getElementById('lockCloudBtn');
-    if (cloudButton && !window.unlocked) cloudButton.style.display = 'none';
-    startCloudAfterUnlock();
-    if (started || tries >= 3600) clearInterval(timer);
-  }, 100);
+  // Exposto para o aplicativo chamar explicitamente depois de desbloquear.
+  window.startCloudAfterUnlock = startCloudAfterUnlock;
+
+  // Também aceita o evento disparado pelo núcleo de segurança.
+  window.addEventListener('finance:unlocked', startCloudAfterUnlock);
 })();
