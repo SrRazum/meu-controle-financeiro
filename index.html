@@ -234,6 +234,13 @@ th{background:#fbefe5}
 </section>
 
 <section id="relatorios" class="view">
+<div class="card">
+<h2>📊 Relatórios</h2>
+<div class="filter">
+<label style="min-width:150px">Período<input id="reportMonth" type="month"></label>
+</div>
+<div class="small">Os valores abaixo consideram somente lançamentos cuja data pertence ao período selecionado.</div>
+</div>
 <div class="grid" id="reportCards"></div>
 <div class="section card"><h2>📊 Resumo por categoria</h2><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id="catBody"></tbody></table></div></div>
 </section>
@@ -545,9 +552,14 @@ function render(){
  homeDue.innerHTML=due.length?due.map(dueRow).join(""):'<div class="empty">Nenhuma conta vencendo nos próximos 7 dias.</div>';
  homeOverdue.innerHTML=overdue.length?overdue.map(dueRow).join(""):'<div class="empty">Nenhuma conta vencida.</div>';
  tbody.innerHTML=filtered().map(x=>`<tr><td>${fmtDate(x.data)}</td><td>${x.descricao}</td><td>${x.tipo==="entrada"?"Entrada":"Saída"}</td><td>${x.controle==="pessoal"?"Pessoal":"Restaurante"}</td><td>${x.categoria}</td><td class="${x.tipo==="entrada"?"green":"red"}">${x.tipo==="entrada"?"+":"-"} ${brl(x.valor)}</td><td><span class="status ${statusClass(x)}">${statusText(x)}</span></td><td class="actions"><button class="btn-edit" onclick="editItem('${x.id}')">✏️ Editar</button>${x.status==="pendente"?`<button class="btn-pay" onclick="pay('${x.id}')">${x.tipo==="entrada"?"Recebido":"Pago"}</button>`:""}<button class="btn-delete" onclick="delItem('${x.id}')">🗑️</button></td></tr>`).join("")||`<tr><td colspan="8" class="empty">Nenhuma movimentação encontrada.</td></tr>`;
- let m=activeData().filter(x=>x.data.startsWith(month)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);
- reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",activeData().filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0),"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");
- let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no mês atual.</td></tr>';
+ let reportMonthEl=document.getElementById("reportMonth");
+ if(reportMonthEl && !reportMonthEl.value)reportMonthEl.value=month;
+ let reportPeriod=reportMonthEl?.value||month;
+ let m=activeData().filter(x=>x.data.startsWith(reportPeriod)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);
+ let pendingPeriod=m.filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0);
+ reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",pendingPeriod,"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");
+ let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no período selecionado.</td></tr>';
+ if(reportMonthEl)reportMonthEl.onchange=render;
  dueList.innerHTML=(activeData().filter(x=>x.status==="pendente"&&x.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))).map(d=>`<div class="card" style="margin-bottom:8px"><div class="actions"><strong>${d.descricao}</strong><span class="status ${statusClass(d)}">${statusText(d)}</span><span style="margin-left:auto">${brl(d.valor)}</span></div><div class="label">Vencimento: ${fmtDate(d.vencimento)} · ${d.controle} · ${d.categoria}</div><div class="actions" style="margin-top:8px"><button class="success" onclick="pay('${d.id}')">☑ Marcar como pago</button></div></div>`).join("")||'<div class="empty">Nenhum vencimento pendente.</div>';
  loadPrefs();
 }
