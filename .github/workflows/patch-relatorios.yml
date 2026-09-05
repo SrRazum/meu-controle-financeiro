@@ -1,0 +1,45 @@
+name: Preparar filtro de periodo
+
+on:
+  push:
+    branches:
+      - revisao-v1.13-filtro-relatorios-work
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aplicar filtro de periodo nos relatorios
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+
+          old_section = '''<section id=\"relatorios\" class=\"view\">\n<div class=\"grid\" id=\"reportCards\"></div>\n<div class=\"section card\"><h2>📊 Resumo por categoria</h2><div class=\"table-wrap\"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id=\"catBody\"></tbody></table></div></div>\n</section>'''
+
+          new_section = '''<section id=\"relatorios\" class=\"view\">\n<div class=\"card\">\n<h2>📊 Relatórios</h2>\n<div class=\"filter\">\n<label style=\"min-width:150px\">Período<input id=\"reportMonth\" type=\"month\"></label>\n</div>\n<div class=\"small\">Os valores abaixo consideram somente lançamentos cuja data pertence ao período selecionado.</div>\n</div>\n<div class=\"grid\" id=\"reportCards\"></div>\n<div class=\"section card\"><h2>📊 Resumo por categoria</h2><div class=\"table-wrap\"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id=\"catBody\"></tbody></table></div></div>\n</section>'''
+
+          if old_section not in s:
+              raise SystemExit('Secao de relatorios nao encontrada; nenhuma alteracao feita.')
+          s = s.replace(old_section, new_section, 1)
+
+          old = ''' let m=activeData().filter(x=>x.data.startsWith(month)), en=m.filter(x=>x.tipo===\"entrada\").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo===\"saida\").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[[\"Entradas\",en,\"green\"],[\"Saídas\",sa,\"red\"],[\"Resultado\",en-sa,en-sa>=0?\"green\":\"red\"],[\"Contas pendentes\",activeData().filter(x=>x.status===\"pendente\").reduce((s,x)=>s+x.valor,0),\"orange\"]].map(x=>`<div class=\"card\"><div class=\"label\">${x[0]}</div><div class=\"value ${x[2]}\">${brl(x[1])}</div></div>`).join(\"\");\n let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo===\"entrada\"?\"e\":\"s\"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class=\"green\">${brl(v.e)}</td><td class=\"red\">${brl(v.s)}</td></tr>`).join(\"\")||'<tr><td colspan=\"3\" class=\"empty\">Sem dados no mês atual.</td></tr>';'''
+
+          new = ''' let reportMonthEl=document.getElementById(\"reportMonth\");\n if(reportMonthEl && !reportMonthEl.value)reportMonthEl.value=month;\n let reportPeriod=reportMonthEl?.value||month;\n let m=activeData().filter(x=>x.data.startsWith(reportPeriod)), en=m.filter(x=>x.tipo===\"entrada\").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo===\"saida\").reduce((s,x)=>s+x.valor,0);\n let pendingPeriod=m.filter(x=>x.status===\"pendente\").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[[\"Entradas\",en,\"green\"],[\"Saídas\",sa,\"red\"],[\"Resultado\",en-sa,en-sa>=0?\"green\":\"red\"],[\"Contas pendentes\",pendingPeriod,\"orange\"]].map(x=>`<div class=\"card\"><div class=\"label\">${x[0]}</div><div class=\"value ${x[2]}\">${brl(x[1])}</div></div>`).join(\"\");\n let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo===\"entrada\"?\"e\":\"s\"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class=\"green\">${brl(v.e)}</td><td class=\"red\">${brl(v.s)}</td></tr>`).join(\"\")||'<tr><td colspan=\"3\" class=\"empty\">Sem dados no período selecionado.</td></tr>';\n if(reportMonthEl)reportMonthEl.onchange=render;'''
+
+          if old not in s:
+              raise SystemExit('Bloco de calculo dos relatorios nao encontrado; nenhuma alteracao feita.')
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet || git commit -m 'fix: adicionar filtro de periodo aos relatorios'
+          git push
