@@ -1,6 +1,6 @@
-const APP_VERSION = "financeiro-v1.15";
+const APP_VERSION = "financeiro-v1.16";
 const CACHE_NAME = `meu-controle-${APP_VERSION}`;
-const APP_SHELL = ["./", "./index.html", "./manifest.json", "./logo.png"];
+const APP_SHELL = ["./", "./index.html", "./manifest.json", "./logo.png", "./boot-fix.js"];
 
 self.addEventListener("install", event => {
   event.waitUntil(
@@ -27,12 +27,9 @@ self.addEventListener("message", event => {
 self.addEventListener("fetch", event => {
   const request = event.request;
   if (request.method !== "GET") return;
-
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Para navegação, sempre tenta a versão publicada primeiro.
-  // Assim uma atualização do GitHub Pages não fica presa ao index.html antigo.
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request, { cache: "no-store" }).then(response => {
@@ -41,6 +38,12 @@ self.addEventListener("fetch", event => {
         return response;
       }).catch(() => caches.match("./index.html"))
     );
+    return;
+  }
+
+  // O boot de recuperação nunca deve ficar preso ao cache antigo.
+  if (url.pathname.endsWith("/boot-fix.js")) {
+    event.respondWith(fetch(request, { cache: "no-store" }));
     return;
   }
 
