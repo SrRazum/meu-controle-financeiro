@@ -4,6 +4,20 @@ window.SUPABASE_URL = "https://prrgajnjkknstsaokgwy.supabase.co";
 window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
 
 /*
+ * Compatibilidade com versões em cache.
+ *
+ * O estado principal do aplicativo usa um binding lexical `let unlocked`.
+ * Se uma versão antiga/em cache do index.html não carregar esse binding,
+ * as rotinas de sincronização ainda precisam ter um estado global seguro
+ * para não gerar "unlocked is not defined".
+ *
+ * Quando a versão atual do index.html é carregada, ela continua usando seu
+ * próprio `let unlocked`; esta propriedade serve apenas como fallback para
+ * versões parcialmente carregadas ou em cache.
+ */
+if (typeof window.unlocked === "undefined") window.unlocked = false;
+
+/*
  * Correção de inicialização da sincronização.
  *
  * O index.html carrega o config.js ANTES da biblioteca supabase-js e chama
