@@ -29,9 +29,6 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     }
   }
 
-  // Depois do login, verifica diretamente a existência do cofre da conta.
-  // Não usa cloudFetchVault(), pois essa rotina depende da senha de proteção
-  // local e pode retornar vazio antes de o usuário informar essa senha.
   async function cloudVaultExists(client){
     try{
       const { data, error } = await client
@@ -50,23 +47,21 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
   }
 
   function enterRestoreMode(){
-    // Caminho normal: usa a rotina de segurança do aplicativo.
+    // IMPORTANTE: não chamar initializeSecurity() aqui.
+    // initializeSecurity() termina chamando showLock("setup") quando não há
+    // um cofre local, sobrescrevendo o modo restore e criando o loop observado.
+    // O handler do formulário já foi instalado pela inicialização normal.
     if(typeof window.setSecurityMode==="function"){
-      try{
-        window.setSecurityMode("restore");
-      }catch(e){
-        console.warn("setSecurityMode falhou:",e);
-      }
+      try{ window.setSecurityMode("restore"); }
+      catch(e){ console.warn("setSecurityMode falhou:",e); }
     }
 
-    // Fallback visual para versões parcialmente carregadas.
     const title=document.getElementById("lockTitle");
     const description=document.getElementById("lockDescription");
     const button=document.getElementById("unlockButton");
     const confirm=document.getElementById("unlockPassword2");
     const cloudBtn=document.getElementById("lockCloudBtn");
     const msg=document.getElementById("lockMsg");
-    const form=document.getElementById("unlockForm");
 
     if(title) title.textContent="Restaurar dados da nuvem";
     if(description) description.textContent="Digite a senha de proteção usada anteriormente neste aplicativo para descriptografar e restaurar seus lançamentos.";
@@ -75,18 +70,8 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     if(cloudBtn) cloudBtn.style.display="none";
     if(msg) msg.textContent="Conta conectada. Digite a senha de proteção usada para os dados da nuvem.";
 
-    // Marca explicitamente o modo de restauração para as versões em que o
-    // código principal usa essa variável na submissão do formulário.
     window.__securityMode="restore";
     window.__restoreFromCloud=true;
-
-    // IMPORTANTE: não chamar initializeSecurity() aqui.
-    // Essa função recria o formulário e, quando não existe uma senha local,
-    // executa showLock("setup"), sobrescrevendo o modo restore e causando o
-    // loop: Sincronização -> Restaurar dados -> Criar proteção.
-    // O handler do formulário já é instalado pela inicialização normal do app
-    // e setSecurityMode("restore") acima é suficiente para direcioná-lo.
-    if(form) form.reset;
   }
 
   async function login(){
@@ -101,8 +86,6 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     }
 
     try{
-      // Cliente dedicado para garantir que a autenticação ocorra mesmo quando
-      // uma versão anterior do index.html estiver parcialmente em cache.
       const client=window.supabase.createClient(
         window.SUPABASE_URL,
         window.SUPABASE_PUBLISHABLE_KEY,
@@ -113,7 +96,6 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
       const sessionResult=await client.auth.getSession();
       if(sessionResult.error || !sessionResult.data?.session) throw new Error("A autenticação foi concluída, mas a sessão não foi estabelecida.");
 
-      // Deixa o cliente autenticado disponível para o restante do aplicativo.
       window.__syncClient=client;
       await window.initCloud();
       document.getElementById("syncPassword").value="";
