@@ -1,6 +1,7 @@
 name: Apply V1.12 fixes
 on:
-  workflow_dispatch:
+  push:
+    branches: [v1.12-fix-work]
 permissions:
   contents: write
 jobs:
@@ -14,5 +15,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add index.html
-          git commit -m 'fix: apply validated V1.12 protection and sync corrections'
+          git commit -m 'fix: apply validated V1.12 protection and sync corrections' || exit 0
           git push
