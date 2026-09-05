@@ -343,16 +343,20 @@ function setSecurityMode(mode){
  if(!p2||!title||!desc||!btn)return;
  const setup=mode==="setup";
  const restore=mode==="restore";
+ const ended=mode==="sessionEnded";
  p2.style.display=setup?"block":"none";
  p2.required=setup;
- title.textContent=setup?"Criar proteção":restore?"Restaurar dados da nuvem":"Aplicativo bloqueado";
+ title.textContent=setup?"Criar proteção":restore?"Restaurar dados da nuvem":ended?"Sessão encerrada":"Aplicativo bloqueado";
  desc.textContent=setup
    ?"Crie uma senha para proteger os dados financeiros registrados neste aplicativo."
    :restore
    ?"Esta conta já possui lançamentos guardados na nuvem. Digite a senha de proteção usada no outro dispositivo para baixá-los."
+   :ended
+   ?"Entre com sua conta de sincronização para acessar os dados desta conta."
    :"Digite sua senha para acessar seus dados financeiros.";
- btn.textContent=setup?"Criar proteção":restore?"Restaurar dados":"Desbloquear";
- if(cloudBtn)cloudBtn.style.display=(setup||restore)?"block":"none";
+ btn.textContent=setup?"Criar proteção":restore?"Restaurar dados":ended?"Entrar na conta":"Desbloquear";
+ if(cloudBtn){cloudBtn.style.display=(setup||restore||ended)?"block":"none";cloudBtn.textContent=ended?"☁️ Entrar na conta":"☁️ Já tenho dados na nuvem — entrar na conta";}
+ btn.style.display=ended?"none":"block";
 }
 function showLock(mode="unlock"){
  const screen=document.getElementById("lockScreen");
@@ -738,11 +742,15 @@ async function syncLogin(){
  document.getElementById("syncPassword").value="";
  if(!unlocked){
    const offered=await maybeOfferCloudRestore();
-   msg.textContent=offered
-     ?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos."
-     :"Conta conectada. Desbloqueie o aplicativo para sincronizar.";
+   if(offered){
+     msg.textContent="Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.";
+     setSecurityMode("restore");
+   }else{
+     setSecurityMode("setup");
+     msg.textContent="Conta conectada. Crie a proteção deste dispositivo para começar com os dados desta conta.";
+   }
    refreshSyncUI();
-   if(offered)closeSyncModal();
+   closeSyncModal();
    return;
  }
  msg.textContent="Conta conectada. Sincronizando...";
@@ -768,7 +776,25 @@ async function syncSignup(){
 }
 async function syncLogout(){
  if(!__supabase)return;
- await __supabase.auth.signOut();__syncReady=false;__cloudMismatch=false;setRecoverVisible(false);setSyncState("");refreshSyncUI();
+ if(unlocked){
+   await syncNow(false);
+   if(__cloudMismatch){
+     const m=document.getElementById("syncMsg");
+     if(m)m.textContent="A conta possui dados protegidos com outra senha. Recupere-os antes de sair para nao perder alteracoes locais.";
+     return;
+   }
+ }
+ await __supabase.auth.signOut();
+ __syncReady=false;__cloudMismatch=false;setRecoverVisible(false);setSyncState("");
+ localStorage.removeItem(SECURE_KEY);
+ localStorage.removeItem(LEGACY_KEY);
+ data=[];
+ window.__financePassword=null;
+ unlocked=false;
+ clearTimeout(inactivityTimer);
+ closeSyncModal();
+ showLock("sessionEnded");
+ refreshSyncUI();
 }
 async function syncNow(manual=false){
  const msg=document.getElementById("syncMsg");
