@@ -29,6 +29,64 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     }
   }
 
+  // Depois do login, verifica diretamente a existência do cofre da conta.
+  // Não usa cloudFetchVault(), pois essa rotina depende da senha de proteção
+  // local e pode retornar vazio antes de o usuário informar essa senha.
+  async function cloudVaultExists(client){
+    try{
+      const { data, error } = await client
+        .from("finance_vault")
+        .select("*")
+        .limit(1);
+      if(error){
+        console.warn("Não foi possível consultar finance_vault:",error);
+        return false;
+      }
+      return Array.isArray(data) && data.length > 0;
+    }catch(e){
+      console.warn("Falha na consulta do cofre:",e);
+      return false;
+    }
+  }
+
+  function enterRestoreMode(){
+    // Caminho normal: usa a rotina de segurança do aplicativo.
+    if(typeof window.setSecurityMode==="function"){
+      try{
+        window.setSecurityMode("restore");
+      }catch(e){
+        console.warn("setSecurityMode falhou:",e);
+      }
+    }
+
+    // Fallback visual para versões parcialmente carregadas.
+    const title=document.getElementById("lockTitle");
+    const description=document.getElementById("lockDescription");
+    const button=document.getElementById("unlockButton");
+    const confirm=document.getElementById("unlockPassword2");
+    const cloudBtn=document.getElementById("lockCloudBtn");
+    const msg=document.getElementById("lockMsg");
+    const form=document.getElementById("unlockForm");
+
+    if(title) title.textContent="Restaurar dados da nuvem";
+    if(description) description.textContent="Digite a senha de proteção usada anteriormente neste aplicativo para descriptografar e restaurar seus lançamentos.";
+    if(button) button.textContent="Restaurar dados";
+    if(confirm) confirm.style.display="none";
+    if(cloudBtn) cloudBtn.style.display="none";
+    if(msg) msg.textContent="Conta conectada. Digite a senha de proteção usada para os dados da nuvem.";
+
+    // Marca explicitamente o modo de restauração para as versões em que o
+    // código principal usa essa variável na submissão do formulário.
+    window.__securityMode="restore";
+    window.__restoreFromCloud=true;
+
+    // Se o código principal não expôs setSecurityMode, tenta atualizar o
+    // estado através de uma nova inicialização sem apagar o modo escolhido.
+    if(form && typeof window.initializeSecurity==="function"){
+      try{ window.initializeSecurity(); }catch(e){ console.warn("Reinicialização da segurança:",e); }
+    }
+  }
+
   async function login(){
     const email=(document.getElementById("syncEmail")?.value||"").trim();
     const password=document.getElementById("syncPassword")?.value||"";
@@ -41,28 +99,29 @@ if (typeof window.unlocked === "undefined") window.unlocked = false;
     }
 
     try{
-      // Usa um cliente próprio para garantir que a autenticação seja concluída
-      // mesmo quando a versão do index.html em cache não expõe o cliente lexical.
-      const client=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_PUBLISHABLE_KEY,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}});
+      // Cliente dedicado para garantir que a autenticação ocorra mesmo quando
+      // uma versão anterior do index.html estiver parcialmente em cache.
+      const client=window.supabase.createClient(
+        window.SUPABASE_URL,
+        window.SUPABASE_PUBLISHABLE_KEY,
+        {auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}}
+      );
       const result=await client.auth.signInWithPassword({email,password});
       if(result.error) throw result.error;
-      await client.auth.getSession();
+      const sessionResult=await client.auth.getSession();
+      if(sessionResult.error || !sessionResult.data?.session) throw new Error("A autenticação foi concluída, mas a sessão não foi estabelecida.");
 
-      // Recria o cliente interno do aplicativo para que __syncReady e os
-      // listeners de autenticação estejam alinhados com a sessão recém-criada.
+      // Deixa o cliente autenticado disponível para o restante do aplicativo.
+      window.__syncClient=client;
       await window.initCloud();
       document.getElementById("syncPassword").value="";
 
-      let hasCloud=false;
-      if(typeof window.cloudFetchVault==="function"){
-        try{ hasCloud=!!(await window.cloudFetchVault()); }catch(e){ console.warn("Verificação da nuvem:",e); }
-      }
+      message("Conta conectada. Verificando os lançamentos guardados na nuvem...");
+      const hasCloud=await cloudVaultExists(client);
 
-      if(hasCloud && typeof window.setSecurityMode==="function"){
-        window.setSecurityMode("restore");
+      if(hasCloud){
+        enterRestoreMode();
         if(typeof window.closeSyncModal==="function") window.closeSyncModal();
-        const lockMsg=document.getElementById("lockMsg");
-        if(lockMsg) lockMsg.textContent="Conta conectada. Digite a senha de proteção usada neste aplicativo para restaurar os lançamentos.";
       }else{
         message("Conta conectada. Nenhum lançamento foi encontrado na nuvem para esta conta.");
         if(typeof window.refreshSyncUI==="function") window.refreshSyncUI();
