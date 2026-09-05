@@ -1,76 +1,28 @@
-name: Fix application startup
+name: Inspect boot
 on:
   push:
     branches: [main]
 permissions:
   contents: write
 jobs:
-  fix:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Patch startup and restore flow
-        shell: bash
+      - name: Extract scripts
         run: |
           python - <<'PY'
           from pathlib import Path
-          p=Path('index.html')
-          s=p.read_text(encoding='utf-8')
-
-          old='if(cloudBtn)cloudBtn.style.display=(setup||restore)?"block":"none"'
-          new='if(cloudBtn)cloudBtn.style.display=(setup||restore)?"block":"none"'
-          if old not in s:
-              raise SystemExit('security mode marker not found')
-
-          # Always expose the cloud-entry action on the first-use screen.
-          marker='<button id="lockCloudBtn" type="button" style="width:100%;padding:11px;margin-top:8px;display:none"'
-          if marker in s:
-              s=s.replace('style="width:100%;padding:11px;margin-top:8px;display:none" onclick="openSyncModal()"','style="width:100%;padding:11px;margin-top:8px;display:block" onclick="openSyncModal()"',1)
-
-          # Do not start cloud initialization before local security has finished.
-          old_boot='initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});'
-          if old_boot not in s:
-              raise SystemExit('old boot initializer not found')
-          new_boot='window.addEventListener("load",async()=>{try{await initializeSecurity();const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();if(unlocked)await syncNow(false);else await maybeOfferCloudRestore()}catch(err){console.error("Falha na inicialização do aplicativo:",err)}});'
-          s=s.replace(old_boot,new_boot,1)
-
-          # Remove the duplicate/early cloud + service-worker startup block.
-          start='initCloud();if("serviceWorker"in navigator){window.addEventListener("load",async()=>{try{const registration=await navigator.serviceWorker.register("./sw.js"'
-          i=s.find(start)
-          if i<0:
-              raise SystemExit('service worker block start not found')
-          j=s.find('</script>',i)
-          if j<0:
-              raise SystemExit('script close not found')
-          s=s[:i]+s[j:]
-
-          p.write_text(s,encoding='utf-8')
+          import re
+          s=Path('index.html').read_text(encoding='utf-8')
+          xs=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',s,re.I|re.S)
+          Path('debug-scripts.txt').write_text('\n\n===== SCRIPT =====\n'.join(xs),encoding='utf-8')
+          print('blocks',len(xs))
           PY
-
-      - name: Validate JavaScript
-        shell: bash
-        run: |
-          python - <<'PY'
-          import re, subprocess, tempfile
-          from pathlib import Path
-          html=Path('index.html').read_text(encoding='utf-8')
-          scripts=re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.I|re.S)
-          for i,script in enumerate(scripts,1):
-              f=Path(tempfile.gettempdir())/f'inline-{i}.js'
-              f.write_text(script,encoding='utf-8')
-              r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
-              if r.returncode:
-                  print(r.stderr)
-                  raise SystemExit(f'JavaScript syntax error in block {i}')
-          print(f'{len(scripts)} JavaScript blocks validated.')
-          PY
-
-      - name: Commit patch
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          git commit -m "Fix boot order and cloud restore flow" || exit 0
+          git add debug-scripts.txt
+          git commit -m "Inspect boot scripts" || exit 0
           git push
