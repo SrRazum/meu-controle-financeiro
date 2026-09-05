@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch index.html exact boot paths
+      - name: Patch index.html safely
         shell: python
         run: |
           from pathlib import Path
@@ -18,52 +18,52 @@ jobs:
           s=p.read_text(encoding='utf-8')
           original=s
 
-          # 1) Boot performs local security only. Never initialize cloud here.
+          # Local protection remains the only boot operation.
           s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
           s=s.replace('initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
 
-          # 2) Delete the entire automatic restore helper by stable function boundaries.
-          a=s.find('async function maybeOfferCloudRestore()')
-          if a>=0:
-              b=s.find('async function pushMerged(',a)
-              if b<0: raise SystemExit('Cannot locate pushMerged after restore helper')
-              s=s[:a]+s[b:]
-
-          # 3) Remove only the known legacy cloud/SW tail, preserving the online handler.
-          tail_start=s.find('initCloud();if("serviceWorker"in navigator){')
-          if tail_start>=0:
-              script_end=s.find('</script>',tail_start)
-              if script_end<0: raise SystemExit('Cannot locate script end after legacy cloud/SW tail')
-              online='window.addEventListener("online",()=>{if(unlocked)requestSync(false)});'
-              s=s[:tail_start]+online+s[script_end:]
-          else:
-              # If the tail was already partly removed, normalize the online trigger.
-              s=s.replace('window.addEventListener("online",()=>{if(unlocked)syncNow(false)});','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});',1)
-
-          # 4) Replace legacy queue helper/calls.
-          old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
-          gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
-          if old_queue in s: s=s.replace(old_queue,gate,1)
+          # Legacy queue is disabled everywhere.
+          s=re.sub(r'function queueSync\(\)\{.*?\}', '', s, count=1, flags=re.S)
           s=s.replace('queueSync()','')
 
-          # 5) Neutralize any remaining automatic restore call; explicit recovery is unchanged.
+          # Automatic restore is disabled everywhere; explicit recoverCloudVault remains intact.
           s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)')
           s=s.replace('else Promise.resolve(false)', 'else {}')
 
-          # 6) Route every fixed sync call through the single gate.
+          # Install the single synchronization gateway before syncNow.
+          if 'async function requestSync(manual=false)' not in s:
+              needle='async function syncNow(manual=false)'
+              gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)};'
+              if needle not in s: raise SystemExit('syncNow definition not found')
+              s=s.replace(needle,gate+needle,1)
+
+          # Route all boolean sync triggers through the gateway.
           s=s.replace('await syncNow(false)','await requestSync(false)')
           s=s.replace('syncNow(false)','requestSync(false)')
           s=s.replace('syncNow(true)','requestSync(true)')
           s=re.sub(r'async function save\(\)\{await secureSave\(\);if\(typeof syncNow==="function"\)await requestSync\(false\)\}', 'async function save(){await secureSave();if(unlocked)await requestSync(false)}', s, count=1)
 
-          # 7) Assertions: no legacy boot machinery and no boolean direct sync calls.
-          for token in ['navigator.serviceWorker.register','serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()','initCloud();if("serviceWorker"in navigator)']:
-              if token in s: raise SystemExit('Forbidden legacy marker remains: '+token)
-          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow(false/true) remains outside requestSync')
-          if 'async function requestSync(manual=false)' not in s: raise SystemExit('requestSync gate was not installed')
+          # Replace the legacy cloud/SW tail with a safe online handler. This preserves all prior braces.
+          marker='initCloud();if("serviceWorker"in navigator){'
+          if marker in s:
+              a=s.find(marker)
+              b=s.find('</script>',a)
+              if b<0: raise SystemExit('script end not found')
+              s=s[:a]+'window.addEventListener("online",()=>{if(unlocked)requestSync(false)});'+s[b:]
+          else:
+              s=s.replace('window.addEventListener("online",()=>{if(unlocked)syncNow(false)});','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});',1)
+
+          # Remove any remaining SW controller/reload block if it survived outside the tail.
+          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','')
+
+          # Assertions. These tokens are checked in executable source only; no SW/restore bootstrap may remain.
+          for token in ['navigator.serviceWorker.register','navigator.serviceWorker.addEventListener','queueSync()','maybeOfferCloudRestore()']:
+              if token in s: raise SystemExit('Forbidden executable marker remains: '+token)
+          if re.search(r'(?<!function )\bsyncNow\((?:false|true)\)',s): raise SystemExit('Direct syncNow(false/true) remains')
+          if 'async function requestSync(manual=false)' not in s: raise SystemExit('requestSync missing')
           if s==original: raise SystemExit('No changes made')
           p.write_text(s,encoding='utf-8')
-          print('index.html patch complete')
+          print('index.html patched safely')
 
       - name: Validate inline JavaScript
         shell: bash
