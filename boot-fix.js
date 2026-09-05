@@ -16,10 +16,12 @@
         });
       }
 
-      // Em uma instalação nova, deixe explícita a opção de entrar na conta
-      // existente sem obrigar o usuário a criar uma nova proteção.
-      if(cloudBtn && typeof window.openSyncModal==='function'){
+      // A opção de entrar na conta existente precisa ficar visível mesmo
+      // quando a inicialização secundária do aplicativo falhar.
+      if(cloudBtn){
         cloudBtn.style.display='block';
+        cloudBtn.style.visibility='visible';
+        cloudBtn.hidden=false;
       }
     }catch(err){
       console.warn('Boot de recuperação:',err);
@@ -28,4 +30,5 @@
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot,{once:true});
   else boot();
   setTimeout(boot,800);
+  setTimeout(boot,2000);
 })();
