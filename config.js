@@ -1,14 +1,10 @@
-// Inicialização segura e compatibilidade de bootstrap.
-// Este arquivo NÃO altera localStorage, IndexedDB, dados criptografados ou sessão do Supabase.
+// Configuração segura do Meu Controle Financeiro.
+// A conexão com a nuvem só é inicializada DEPOIS que o aplicativo for
+// desbloqueado/criado. Isso impede que uma sessão Supabase existente
+// altere a tela de segurança durante o boot e elimina o ciclo
+// proteção -> restauração -> proteção.
 (function () {
   'use strict';
-  try {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.register) {
-      navigator.serviceWorker.register = function () {
-        return Promise.reject(new Error('Service Worker desativado pelo aplicativo.'));
-      };
-    }
-  } catch (_) {}
   try {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function (regs) {
@@ -17,8 +13,6 @@
         }));
       }).catch(function () {});
     }
-  } catch (_) {}
-  try {
     if ('caches' in window) {
       caches.keys().then(function (keys) {
         return Promise.all(keys.map(function (key) {
@@ -28,31 +22,22 @@
     }
   } catch (_) {}
 
-  // Não faça restauração automática da nuvem durante o boot.
-  // O usuário cria/desbloqueia a proteção local primeiro; a reconciliação
-  // com os dados da nuvem continua disponível pela tela de sincronização.
-  window.__MCF_DISABLE_AUTO_CLOUD_RESTORE = true;
+  var URL_VALUE = "https://prrgajnjkknstsaokgwy.supabase.co";
+  var KEY_VALUE = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
+  var started = false;
 
-  // As funções do index.html são declaradas depois deste arquivo. Quando
-  // maybeOfferCloudRestore aparecer, neutralizamos apenas o convite automático.
-  // Isso evita o ciclo proteção -> restauração -> proteção.
-  (function guardAutoRestore() {
-    var attempts = 0;
-    var timer = setInterval(function () {
-      attempts++;
-      try {
-        if (typeof window.maybeOfferCloudRestore === 'function') {
-          window.maybeOfferCloudRestore = async function () { return false; };
-          clearInterval(timer);
-          return;
-        }
-      } catch (_) {}
-      if (attempts >= 600) clearInterval(timer);
-    }, 10);
-  })();
+  function startCloudAfterUnlock() {
+    if (started || !window.unlocked || typeof window.initCloud !== 'function') return;
+    started = true;
+    window.SUPABASE_URL = URL_VALUE;
+    window.SUPABASE_PUBLISHABLE_KEY = KEY_VALUE;
+    try { window.initCloud(); } catch (_) {}
+  }
+
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    startCloudAfterUnlock();
+    if (started || tries >= 3600) clearInterval(timer);
+  }, 100);
 })();
-
-// Configuração do Supabase para o Meu Controle Financeiro.
-// A Publishable key pode ser usada no navegador; mantenha RLS habilitado no banco.
-window.SUPABASE_URL = "https://prrgajnjkknstsaokgwy.supabase.co";
-window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
