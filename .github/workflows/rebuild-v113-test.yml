@@ -18,6 +18,7 @@ jobs:
       - name: Restaurar index da main e aplicar filtro
         shell: python
         run: |
+          import re
           import subprocess
           from pathlib import Path
 
@@ -27,26 +28,38 @@ jobs:
           s=p.read_text(encoding='utf-8')
 
           # Identificação visual inequívoca da cópia de teste.
+          if 'V1.12' not in s:
+              raise SystemExit('Identificacao V1.12 nao encontrada na main; nenhuma alteracao feita.')
           s=s.replace('V1.12','V1.13-TESTE',1)
 
-          old='''<section id="relatorios" class="view">\n<div class="grid" id="reportCards"></div>\n<div class="section card"><h2>📊 Resumo por categoria</h2><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id="catBody"></tbody></table></div></div>\n</section>'''
-          new='''<section id="relatorios" class="view">\n<div class="card">\n<h2>📊 Relatórios</h2>\n<div class="filter">\n<label style="min-width:150px">Período<input id="reportMonth" type="month"></label>\n</div>\n<div class="small">Os valores abaixo consideram somente lançamentos cuja data pertence ao período selecionado.</div>\n</div>\n<div class="grid" id="reportCards"></div>\n<div class="section card"><h2>📊 Resumo por categoria</h2><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id="catBody"></tbody></table></div></div>\n</section>'''
-          if old not in s:
-              raise SystemExit('Secao de relatorios nao encontrada na V1.12; nenhuma alteracao de filtro feita.')
-          s=s.replace(old,new,1)
+          # O baseline atual da main possui uma estrutura de Relatórios diferente
+          # da estrutura usada pelas tentativas anteriores. Substituímos somente
+          # essa seção, preservando todo o restante do index da main.
+          report_re=re.compile(r'<section id="relatorios" class="view">.*?</section>', re.S)
+          report_new='''<section id="relatorios" class="view">\n<div class="card">\n<h2>📊 Relatórios</h2>\n<div class="filter">\n<label style="min-width:150px">Período<input id="reportMonth" type="month"></label>\n</div>\n<div class="small">Os valores abaixo consideram somente lançamentos cuja data pertence ao período selecionado.</div>\n</div>\n<div class="grid" id="reportCards"></div>\n<div class="section card"><h2>📊 Resumo por categoria</h2><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Entradas</th><th>Saídas</th></tr></thead><tbody id="catBody"></tbody></table></div></div>\n</section>'''
+          s,n=report_re.subn(report_new,s,count=1)
+          if n != 1:
+              raise SystemExit('Secao de relatorios nao encontrada na main; nenhuma alteracao feita.')
 
-          oldcalc='''let m=activeData().filter(x=>x.data.startsWith(month)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",activeData().filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0),"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");'''
-          newcalc='''let reportMonthEl=document.getElementById("reportMonth");\n if(reportMonthEl && !reportMonthEl.value)reportMonthEl.value=month;\n let reportPeriod=reportMonthEl?.value||month;\n let m=activeData().filter(x=>x.data.startsWith(reportPeriod)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);\n let pendingPeriod=m.filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0);\n reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",pendingPeriod,"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");'''
-          if oldcalc not in s:
-              raise SystemExit('Calculo exato de relatorios nao localizado; nenhuma alteracao feita.')
-          s=s.replace(oldcalc,newcalc,1)
+          # Substitui a função renderRel inteira, usando a estrutura de dados
+          # existente no baseline atual (data/status/controle), sem depender de
+          # activeData() ou de funções que não existem na main restaurada.
+          render_re=re.compile(r'function renderRel\(\)\{.*?\}\nfunction populateMonthFilter', re.S)
+          render_new='''function renderRel(){const reportMonthEl=document.getElementById("reportMonth");if(reportMonthEl&&!reportMonthEl.value)reportMonthEl.value=today().slice(0,7);const period=reportMonthEl?.value||today().slice(0,7);const arr=data.filter(x=>x.data?.startsWith(period));const ent=arr.filter(x=>x.tipo==="entrada"&&x.status==="pago").reduce((a,x)=>a+ +x.valor,0),sai=arr.filter(x=>x.tipo==="saida"&&x.status==="pago").reduce((a,x)=>a+ +x.valor,0),pend=arr.filter(x=>x.status==="pendente").reduce((a,x)=>a+ +x.valor,0);document.getElementById("reportCards").innerHTML=[["Entradas recebidas",ent,"green"],["Saídas pagas",sai,"red"],["Resultado",ent-sai,ent-sai>=0?"green":"red"],["Contas pendentes",pend,"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${money(x[1])}</div></div>`).join("");const map={};arr.forEach(x=>{map[x.categoria||"Sem categoria"]??={e:0,s:0};map[x.categoria||"Sem categoria"][x.tipo==="entrada"?"e":"s"]+=+x.valor});document.getElementById("catBody").innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${money(v.e)}</td><td class="red">${money(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no período selecionado.</td></tr>';}\nfunction populateMonthFilter'''
+          s,n=render_re.subn(render_new,s,count=1)
+          if n != 1:
+              raise SystemExit('Funcao renderRel nao localizada na main; nenhuma alteracao feita.')
 
-          oldcat='''let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no mês atual.</td></tr>';'''
-          newcat='''let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no período selecionado.</td></tr>';\n if(reportMonthEl)reportMonthEl.onchange=render;'''
-          if oldcat not in s:
-              raise SystemExit('Resumo por categoria nao localizado; nenhuma alteracao feita.')
-          s=s.replace(oldcat,newcat,1)
+          # O relatório de teste usa somente o filtro de mês. Retiramos o listener
+          # do antigo seletor de controle para não deixar referência a elemento inexistente.
+          old_events='["filtroMes","filtroTipo","filtroControle","filtroStatus","vFiltro","relMes","relControle"]'
+          new_events='["filtroMes","filtroTipo","filtroControle","filtroStatus","vFiltro","reportMonth"]'
+          if old_events not in s:
+              raise SystemExit('Lista de listeners esperada nao localizada; nenhuma alteracao feita.')
+          s=s.replace(old_events,new_events,1)
 
+          # O novo input não precisa de um segundo seletor: o listener acima
+          # chama render() e preserva o mês escolhido.
           p.write_text(s,encoding='utf-8')
 
       - name: Commit da copia reconstruida
