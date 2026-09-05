@@ -9,51 +9,67 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Transform index.html
+      - name: Patch index.html non-destructively
         shell: python
         run: |
           from pathlib import Path
           p=Path('index.html'); s=p.read_text(encoding='utf-8')
-          s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";queueSync()});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
-          s=s.replace('initializeSecurity().then(async()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();queueSync()}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
+          original=s
+
+          # Boot: local security only. Remove the old queue trigger from the startup promise.
+          s=s.replace('queueSync()','')
+          s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.14";});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
+          s=s.replace('initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.15";await initCloud();}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});','initializeSecurity().then(()=>{const v=document.getElementById("appVersion");if(v)v.textContent="V1.16";}).catch(err=>{console.error("Falha na inicialização de segurança:",err)});',1)
+
+          # Single sync gateway. If an earlier gateway exists, do not duplicate it.
+          if 'async function requestSync(manual=false)' not in s:
+              needle='async function syncNow(manual=false)'
+              gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)};'
+              if needle not in s: raise SystemExit('syncNow definition not found')
+              s=s.replace(needle,gate+needle,1)
+
+          # All boolean sync calls route through requestSync. The syncNow implementation itself is untouched.
+          s=s.replace('await syncNow(false)','await requestSync(false)')
+          s=s.replace('syncNow(false)','requestSync(false)')
+          s=s.replace('syncNow(true)','requestSync(true)')
+
+          # Automatic restore is unreachable: rename helper and neutralize every call.
           s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()',1)
           s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)')
           s=s.replace('else Promise.resolve(false)', 'else {}')
-          marker='initCloud();if("serviceWorker"in navigator){'
-          if marker in s:
-              a=s.find(marker); b=s.find('</script>',a)
-              if b<0: raise SystemExit('script end not found')
-              s=s[:a]+'window.addEventListener("online",()=>{if(unlocked)requestSync(false)});'+s[b:]
-          else: s=s.replace('window.addEventListener("online",()=>{if(unlocked)syncNow(false)});','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});',1)
-          old='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
-          gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
-          if old in s: s=s.replace(old,gate,1)
-          s=s.replace('queueSync()','')
-          s=s.replace('await syncNow(false)','await requestSync(false)').replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
-          s=s.replace('if(session){if(unlocked)requestSync(false);else Promise.resolve(false)}','if(session&&unlocked){await requestSync(false)}')
-          s=s.replace('if(data.session){if(unlocked)await requestSync(true);else Promise.resolve(false)}','if(data.session&&unlocked){await requestSync(true)}')
-          Path('debug-index.html').write_text(s,encoding='utf-8')
+
+          # Prevent cloud initialization from the boot tail while preserving the script's braces.
+          s=s.replace('initCloud();if("serviceWorker"in navigator){', 'if(unlocked)requestSync(false);if(false){',1)
+          # Disable the second Service Worker condition without deleting its body.
+          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}', 'if(false){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}',1)
+
+          # No Service Worker registration can execute; no queue/automatic restore call remains.
+          if 'navigator.serviceWorker.register' in s: raise SystemExit('Service Worker registration remains')
+          if 'queueSync()' in s: raise SystemExit('queueSync call remains')
+          if 'maybeOfferCloudRestore()' in s: raise SystemExit('automatic restore call remains')
+          if s==original: raise SystemExit('No changes made')
           p.write_text(s,encoding='utf-8')
-          print('transformed')
-      - name: Commit transformed debug copy
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add debug-index.html
-          git commit -m "chore: capture transformed index for diagnosis [skip ci]" || true
-          git push || true
-      - name: Validate transformed JavaScript
+          print('patched')
+      - name: Validate inline JavaScript
         shell: bash
         run: |
           python - <<'PY'
           import re, subprocess, tempfile
           from pathlib import Path
-          html=Path('debug-index.html').read_text(encoding='utf-8')
+          html=Path('index.html').read_text(encoding='utf-8')
           scripts=[x for x in re.findall(r'<script(?:\s[^>]*)?>(.*?)</script>',html,flags=re.I|re.S) if x.strip()]
           for i,script in enumerate(scripts,1):
               f=Path(tempfile.gettempdir())/f'inline-{i}.js'; f.write_text(script,encoding='utf-8')
               r=subprocess.run(['node','--check',str(f)],capture_output=True,text=True)
               if r.returncode:
-                  print(r.stderr); raise SystemExit(1)
-          print('syntax OK')
+                  print(r.stderr); raise SystemExit(f'Inline JavaScript syntax error in block {i}')
+          print(f'{len(scripts)} inline JavaScript blocks validated.')
           PY
+      - name: Commit patched index.html
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: definitive local-first boot and gated sync"
+          git push
