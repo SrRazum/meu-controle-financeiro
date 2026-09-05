@@ -18,36 +18,35 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
           p=Path('index.html'); s=p.read_text(encoding='utf-8')
-          # Single synchronization gateway.
+          # Single gate, installed before callers are rewritten.
           needle='async function syncNow(manual=false)'
           gate='async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return syncNow(manual)}'
           if 'async function requestSync(manual=false)' not in s:
               if needle not in s: raise SystemExit('syncNow definition not found')
               s=s.replace(needle,gate+needle,1)
-          # Replace legacy queue helper before removing calls.
           old_queue='function queueSync(){if(typeof syncNow!=="function")return;Promise.resolve().then(()=>syncNow(false)).catch(()=>{})}'
           if old_queue in s: s=s.replace(old_queue,gate,1)
+          # Remove only calls, never the function syntax.
           s=s.replace('queueSync()','')
-          # Route fixed sync calls through the gate.
+          # Route fixed sync calls.
           s=s.replace('await syncNow(false)','await requestSync(false)').replace('syncNow(false)','requestSync(false)').replace('syncNow(true)','requestSync(true)')
-          # Avoid recursive replacement if gate was altered by a previous version.
+          # Keep gate correct after caller replacement.
           s=s.replace('async function requestSync(manual=false){if(!unlocked)return;if(!__supabase){await initCloud()}if(!__syncReady){if(manual){const msg=document.getElementById("syncMsg");if(msg)msg.textContent="Entre na sua conta para sincronizar."}return}return requestSync(manual)}',gate)
-          # Disable automatic restore path without affecting explicit recoverCloudVault.
+          # No automatic cloud restore before unlock.
           s=s.replace('async function maybeOfferCloudRestore()', 'async function legacyCloudRestoreDisabled()',1)
           s=s.replace('maybeOfferCloudRestore()', 'Promise.resolve(false)').replace('else Promise.resolve(false)','else {}')
-          # No cloud initialization or Service Worker registration during boot.
+          # Boot no longer calls initCloud; it only installs a post-unlock online trigger.
           s=s.replace('initCloud();if("serviceWorker"in navigator){','window.addEventListener("online",()=>{if(unlocked)requestSync(false)});if("serviceWorker"in navigator){',1)
-          a=s.find('if("serviceWorker"in navigator){window.addEventListener("load",async()=>{')
-          if a>=0:
-              b=s.find('function showUpdateNotice',a)
-              if b<0: raise SystemExit('showUpdateNotice boundary not found')
-              s=s[:a]+s[b:]
-          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','')
-          # Local persistence first; synchronization is gated by unlocked.
+          # Disable registration block without deleting its braces: change the condition and make register a harmless resolved promise.
+          s=s.replace('if("serviceWorker"in navigator){window.addEventListener("load",async()=>{','if(false){window.addEventListener("load",async()=>{',1)
+          s=s.replace('navigator.serviceWorker.register("sw.js")','Promise.resolve(null)',1)
+          s=s.replace('if("serviceWorker"in navigator){navigator.serviceWorker.addEventListener("controllerchange",()=>location.reload())}','if(false){}',1)
+          # Local persistence remains authoritative.
           s=s.replace('async function save(){await secureSave();if(typeof syncNow==="function")await requestSync(false)}','async function save(){await secureSave();if(unlocked)await requestSync(false)}')
           p.write_text(s,encoding='utf-8')
-      - name: Validate final JavaScript and boot invariants
+      - name: Validate final JavaScript and invariants
         shell: bash
         run: |
           python - <<'PY'
