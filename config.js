@@ -1,30 +1,13 @@
 // Configuração do Supabase para o Meu Controle Financeiro.
-// A Publishable key pode ser usada no navegador; mantenha RLS habilitado no banco.
+// Esta configuração é usada somente na branch de teste V1.13.
 window.SUPABASE_URL = "https://prrgajnjkknstsaokgwy.supabase.co";
 window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
 
-/* V1.13 — filtro de relatórios.
-   Mantém o aplicativo-base intacto e acrescenta somente a opção
-   "Todos os períodos" e a atualização dinâmica dos meses disponíveis. */
 (function () {
   const SWITCH_FLAG = "controle_financeiro_account_switch_pending";
   const SECURE_KEY = "controle_financeiro_secure_v1";
-
-  function setupSwitchScreen() {
-    if (localStorage.getItem(SWITCH_FLAG) !== "1") return;
-    const title = document.getElementById("lockTitle");
-    const desc = document.getElementById("lockDescription");
-    const button = document.getElementById("unlockButton");
-    const second = document.getElementById("unlockPassword2");
-    const cloudBtn = document.getElementById("lockCloudBtn");
-    const msg = document.getElementById("lockMsg");
-    if (title) title.textContent = "Sessão encerrada";
-    if (desc) desc.textContent = "Entre com uma conta para acessar seus dados financeiros.";
-    if (button) { button.style.display = "block"; button.textContent = "Criar proteção neste dispositivo"; }
-    if (second) { second.style.display = "block"; second.required = true; }
-    if (cloudBtn) { cloudBtn.style.display = "block"; cloudBtn.textContent = "☁️ Entrar / trocar de conta"; }
-    if (msg) msg.textContent = "Sessão encerrada. Os dados da conta anterior não estão visíveis.";
-  }
+  const LEGACY_KEY = "controle_financeiro_v1";
+  const BOUND_ACCOUNT_KEY = "controle_financeiro_bound_account_v1";
 
   function getData() {
     try { return typeof activeData === "function" ? (activeData() || []) : []; }
@@ -40,29 +23,23 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
   function refreshReportPeriods(keepValue) {
     const select = document.getElementById("reportMonth");
     if (!select || select.tagName !== "SELECT") return;
-
     const old = keepValue || select.value || "__ALL__";
     const months = [...new Set(getData()
       .map(x => x && x.data ? String(x.data).slice(0, 7) : "")
       .filter(v => /^\d{4}-\d{2}$/.test(v)))]
       .sort().reverse();
-
-    const desired = old === "__ALL__" ? "__ALL__" : old;
     select.innerHTML = "";
-
     const all = document.createElement("option");
     all.value = "__ALL__";
     all.textContent = "Todos os períodos";
     select.appendChild(all);
-
     months.forEach(v => {
       const opt = document.createElement("option");
       opt.value = v;
       opt.textContent = monthLabel(v);
       select.appendChild(opt);
     });
-
-    select.value = months.includes(desired) || desired === "__ALL__" ? desired : "__ALL__";
+    select.value = months.includes(old) || old === "__ALL__" ? old : "__ALL__";
   }
 
   function calculateAllPeriods() {
@@ -70,11 +47,10 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     const ent = arr.filter(x => x.tipo === "entrada").reduce((s, x) => s + Number(x.valor || 0), 0);
     const sai = arr.filter(x => x.tipo === "saida").reduce((s, x) => s + Number(x.valor || 0), 0);
     const pend = arr.filter(x => x.status === "pendente").reduce((s, x) => s + Number(x.valor || 0), 0);
-    const moneyFn = typeof brl === "function" ? brl : (v => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+    const money = typeof brl === "function" ? brl : (v => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
     const cards = document.getElementById("reportCards");
     if (cards) cards.innerHTML = [["Entradas", ent, "green"], ["Saídas", sai, "red"], ["Resultado", ent - sai, ent - sai >= 0 ? "green" : "red"], ["Contas pendentes", pend, "orange"]]
-      .map(x => `<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${moneyFn(x[1])}</div></div>`).join("");
-
+      .map(x => `<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${money(x[1])}</div></div>`).join("");
     const map = {};
     arr.forEach(x => {
       const k = x.categoria || "Sem categoria";
@@ -83,90 +59,134 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     });
     const body = document.getElementById("catBody");
     if (body) body.innerHTML = Object.entries(map)
-      .map(([k, v]) => `<tr><td>${k}</td><td class="green">${moneyFn(v.e)}</td><td class="red">${moneyFn(v.s)}</td></tr>`)
-      .join("") || '<tr><td colspan="3" class="empty">Sem dados registrados.</td></tr>';
+      .map(([k, v]) => `<tr><td>${k}</td><td class="green">${money(v.e)}</td><td class="red">${money(v.s)}</td></tr>`).join("")
+      || '<tr><td colspan="3" class="empty">Sem dados registrados.</td></tr>';
   }
 
   function installReportFilter() {
-    const input = document.getElementById("reportMonth");
-    if (!input) return false;
-
-    let select = input;
-    if (input.tagName !== "SELECT") {
-      select = document.createElement("select");
+    let el = document.getElementById("reportMonth");
+    if (!el) return;
+    if (el.tagName !== "SELECT") {
+      const select = document.createElement("select");
       select.id = "reportMonth";
-      input.replaceWith(select);
+      el.replaceWith(select);
+      el = select;
     }
-    select.dataset.allPeriodsReady = "1";
-
     refreshReportPeriods();
-
     const originalRender = window.render;
-    if (typeof originalRender !== "function") return true;
-    if (originalRender.__reportAllWrapped) return true;
-
-    function renderWithAllPeriods() {
-      const el = document.getElementById("reportMonth");
-      const period = el ? el.value : "__ALL__";
-      if (period !== "__ALL__") return originalRender();
-
-      /* O render original exige um mês. Executamos somente para estruturar
-         a tela e depois substituímos os totais pelos dados completos. */
-      const current = new Date().toISOString().slice(0, 7);
-      if (el) el.value = current;
-      originalRender();
-      if (el) el.value = "__ALL__";
-      calculateAllPeriods();
+    if (typeof originalRender !== "function") return;
+    if (!originalRender.__reportAllWrapped) {
+      function renderWithAllPeriods() {
+        const current = document.getElementById("reportMonth");
+        const period = current ? current.value : "__ALL__";
+        if (period !== "__ALL__") return originalRender();
+        const saved = current ? current.value : "__ALL__";
+        const month = new Date().toISOString().slice(0, 7);
+        if (current) current.value = month;
+        originalRender();
+        if (current) current.value = saved;
+        calculateAllPeriods();
+      }
+      renderWithAllPeriods.__reportAllWrapped = true;
+      window.render = renderWithAllPeriods;
     }
-
-    renderWithAllPeriods.__reportAllWrapped = true;
-    window.render = renderWithAllPeriods;
-    select.onchange = function () { window.render(); };
-    select.value = "__ALL__";
+    el.onchange = () => window.render();
+    el.value = "__ALL__";
     window.render();
+  }
+
+  function showSwitchScreen() {
+    if (localStorage.getItem(SWITCH_FLAG) !== "1") return;
+    const title = document.getElementById("lockTitle");
+    const desc = document.getElementById("lockDescription");
+    const button = document.getElementById("unlockButton");
+    const second = document.getElementById("unlockPassword2");
+    const cloudBtn = document.getElementById("lockCloudBtn");
+    const msg = document.getElementById("lockMsg");
+    if (title) title.textContent = "Sessão encerrada";
+    if (desc) desc.textContent = "Entre com uma conta para acessar seus dados financeiros.";
+    if (button) { button.style.display = "block"; button.textContent = "Criar proteção neste dispositivo"; }
+    if (second) { second.style.display = "block"; second.required = true; }
+    if (cloudBtn) { cloudBtn.style.display = "block"; cloudBtn.textContent = "☁️ Entrar / trocar de conta"; }
+    if (msg) msg.textContent = "Sessão encerrada. Os dados da conta anterior não estão visíveis.";
+  }
+
+  function clearLocalAccountState() {
+    try { localStorage.removeItem(SECURE_KEY); } catch (e) {}
+    try { localStorage.removeItem(LEGACY_KEY); } catch (e) {}
+    try { localStorage.removeItem(BOUND_ACCOUNT_KEY); } catch (e) {}
+    try { if (Array.isArray(window.data)) window.data = []; } catch (e) {}
+  }
+
+  function installLogoutGuard() {
+    const original = window.syncLogout;
+    if (typeof original !== "function" || original.__safeSwitchWrappedV2) return false;
+    async function safeLogout() {
+      // Limpa o cofre local somente depois que a sessão Supabase for encerrada.
+      await original();
+      clearLocalAccountState();
+      localStorage.setItem(SWITCH_FLAG, "1");
+      location.reload();
+    }
+    safeLogout.__safeSwitchWrappedV2 = true;
+    window.syncLogout = safeLogout;
     return true;
   }
 
-  function watchReportData() {
+  function installAccountBindingGuard() {
+    const originalLogin = window.syncLogin;
+    if (typeof originalLogin !== "function" || originalLogin.__accountBindingWrapped) return false;
+    async function guardedLogin() {
+      // Se ainda houver uma sessão ativa e o aplicativo estiver desbloqueado,
+      // não permitimos que uma nova conta receba os dados da conta anterior.
+      try {
+        if (window.__supabase && window.unlocked) {
+          const { data: r } = await window.__supabase.auth.getUser();
+          if (r && r.user) {
+            const email = (document.getElementById("syncEmail")?.value || "").trim().toLowerCase();
+            if (email && r.user.email && email !== r.user.email.toLowerCase()) {
+              localStorage.setItem(SWITCH_FLAG, "1");
+              clearLocalAccountState();
+              window.__financePassword = null;
+              window.unlocked = false;
+              await window.__supabase.auth.signOut();
+              location.reload();
+              return;
+            }
+          }
+        }
+      } catch (e) { /* o login original continua sendo a autoridade */ }
+      return originalLogin();
+    }
+    guardedLogin.__accountBindingWrapped = true;
+    window.syncLogin = guardedLogin;
+    return true;
+  }
+
+  window.addEventListener("DOMContentLoaded", function () {
+    // A rotina principal já foi declarada antes do DOMContentLoaded.
+    installLogoutGuard();
+    installAccountBindingGuard();
+    showSwitchScreen();
+    installReportFilter();
+
+    // Reaplica a tela de troca após initializeSecurity(), evitando que a rotina
+    // de inicialização sobrescreva o estado de sessão encerrada.
+    setTimeout(showSwitchScreen, 50);
+    setTimeout(showSwitchScreen, 250);
+    setTimeout(showSwitchScreen, 750);
+
     let lastSignature = "";
     let attempts = 0;
     const timer = setInterval(function () {
       const select = document.getElementById("reportMonth");
-      const data = getData();
-      const signature = data.map(x => `${x.id || ""}|${x.data || ""}`).join(";");
+      const signature = getData().map(x => `${x.id || ""}|${x.data || ""}`).join(";");
       if (select && select.tagName === "SELECT" && signature !== lastSignature) {
         const current = select.value || "__ALL__";
         refreshReportPeriods(current);
         lastSignature = signature;
       }
-      attempts++;
-      if (attempts >= 300) clearInterval(timer);
+      if (++attempts >= 300) clearInterval(timer);
     }, 200);
-  }
-
-  window.addEventListener("DOMContentLoaded", function () {
-    setupSwitchScreen();
-
-    const cloudBtn = document.getElementById("lockCloudBtn");
-    if (cloudBtn && localStorage.getItem(SWITCH_FLAG) === "1") {
-      cloudBtn.onclick = async function () {
-        if (typeof window.openSyncModal === "function") await window.openSyncModal();
-      };
-    }
-
-    const originalLogout = window.syncLogout;
-    if (typeof originalLogout === "function" && !originalLogout.__safeSwitchWrapped) {
-      async function safeLogout() {
-        try { await originalLogout(); } catch (e) {}
-        localStorage.removeItem(SECURE_KEY);
-        localStorage.setItem(SWITCH_FLAG, "1");
-        location.reload();
-      }
-      safeLogout.__safeSwitchWrapped = true;
-      window.syncLogout = safeLogout;
-    }
-
-    installReportFilter();
-    watchReportData();
   });
 })();
