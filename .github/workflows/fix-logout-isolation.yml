@@ -1,0 +1,60 @@
+name: Corrigir isolamento no logout V1.13
+
+on:
+  push:
+    branches:
+      - revisao-v1.13-filtro-relatorios-clean
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: isolar dados no logout') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aplicar correcao de logout e troca de conta
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text(encoding='utf-8')
+
+          old_mode = ''' const setup=mode==="setup";\n const restore=mode==="restore";\n p2.style.display=setup?"block":"none";'''
+          new_mode = ''' const setup=mode==="setup";\n const restore=mode==="restore";\n const ended=mode==="sessionEnded";\n p2.style.display=setup?"block":"none";'''
+          if old_mode not in s: raise SystemExit('Bloco setSecurityMode nao encontrado')
+          s = s.replace(old_mode, new_mode, 1)
+
+          old_text = ''' title.textContent=setup?"Criar proteção":restore?"Restaurar dados da nuvem":"Aplicativo bloqueado";\n desc.textContent=setup\n   ?"Crie uma senha para proteger os dados financeiros registrados neste aplicativo."\n   :restore\n   ?"Esta conta já possui lançamentos guardados na nuvem. Digite a senha de proteção usada no outro dispositivo para baixá-los."\n   :"Digite sua senha para acessar seus dados financeiros.";\n btn.textContent=setup?"Criar proteção":restore?"Restaurar dados":"Desbloquear";\n if(cloudBtn)cloudBtn.style.display=(setup||restore)?"block":"none";'''
+          new_text = ''' title.textContent=setup?"Criar proteção":restore?"Restaurar dados da nuvem":ended?"Sessão encerrada":"Aplicativo bloqueado";\n desc.textContent=setup\n   ?"Crie uma senha para proteger os dados financeiros registrados neste aplicativo."\n   :restore\n   ?"Esta conta já possui lançamentos guardados na nuvem. Digite a senha de proteção usada no outro dispositivo para baixá-los."\n   :ended\n   ?"Entre com sua conta de sincronização para acessar os dados desta conta."\n   :"Digite sua senha para acessar seus dados financeiros.";\n btn.textContent=setup?"Criar proteção":restore?"Restaurar dados":ended?"Entrar na conta":"Desbloquear";\n if(cloudBtn){cloudBtn.style.display=(setup||restore||ended)?"block":"none";cloudBtn.textContent=ended?"☁️ Entrar na conta":"☁️ Já tenho dados na nuvem — entrar na conta";}\n btn.style.display=ended?"none":"block";'''
+          if old_text not in s: raise SystemExit('Texto setSecurityMode nao encontrado')
+          s = s.replace(old_text, new_text, 1)
+
+          old_logout = '''async function syncLogout(){\n if(!__supabase)return;\n await __supabase.auth.signOut();__syncReady=false;__cloudMismatch=false;setRecoverVisible(false);setSyncState("");refreshSyncUI();\n}'''
+          new_logout = '''async function syncLogout(){\n if(!__supabase)return;\n if(unlocked){\n   /* Antes de sair, garante que o estado local chegou ao cofre remoto.\n      Se houver conflito de senha, nao apagamos o cofre local nem encerramos\n      a sessao silenciosamente: o usuario deve recuperar primeiro. */\n   await syncNow(false);\n   if(__cloudMismatch){\n     const m=document.getElementById("syncMsg");\n     if(m)m.textContent="A conta possui dados protegidos com outra senha. Recupere-os antes de sair para nao perder alteracoes locais.";\n     return;\n   }\n }\n await __supabase.auth.signOut();\n __syncReady=false;__cloudMismatch=false;setRecoverVisible(false);setSyncState("");\n /* O cofre ativo deixa de ficar acessivel neste navegador apos o logout.\n    O cofre remoto permanece intacto e sera restaurado apos novo login. */\n localStorage.removeItem(SECURE_KEY);\n localStorage.removeItem(LEGACY_KEY);\n data=[];\n window.__financePassword=null;\n unlocked=false;\n clearTimeout(inactivityTimer);\n closeSyncModal();\n showLock("sessionEnded");\n refreshSyncUI();\n}'''
+          if old_logout not in s: raise SystemExit('syncLogout nao encontrado')
+          s = s.replace(old_logout, new_logout, 1)
+
+          old_login = '''   const offered=await maybeOfferCloudRestore();\n   msg.textContent=offered\n     ?"Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos."\n     :"Conta conectada. Desbloqueie o aplicativo para sincronizar.";\n   refreshSyncUI();\n   if(offered)closeSyncModal();\n   return;'''
+          new_login = '''   const offered=await maybeOfferCloudRestore();\n   if(offered){\n     msg.textContent="Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.";\n     setSecurityMode("restore");\n     refreshSyncUI();\n     closeSyncModal();\n   }else{\n     setSecurityMode("setup");\n     msg.textContent="Conta conectada. Crie a proteção deste dispositivo para começar com os dados desta conta.";\n     refreshSyncUI();\n     closeSyncModal();\n   }\n   return;'''
+          if old_login not in s: raise SystemExit('Bloco syncLogin nao encontrado')
+          s = s.replace(old_login, new_login, 1)
+
+          # O botao da tela de sessao encerrada chama o mesmo modal; apos logout
+          # a tela fica limpa, sem qualquer lancamento da conta anterior.
+          p.write_text(s, encoding='utf-8')
+      - name: Commit da correcao
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html .github/workflows/fix-logout-isolation.yml
+          git diff --cached --quiet || git commit -m 'fix: isolar dados no logout'
+          git push
+      - name: Remover workflow temporario
+        if: success()
+        shell: bash
+        run: |
+          git rm -f .github/workflows/fix-logout-isolation.yml || true
+          git diff --cached --quiet || git commit -m 'chore: remover patch temporario de logout'
+          git push || true
