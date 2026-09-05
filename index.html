@@ -485,7 +485,7 @@ document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{document.query
 
 document.getElementById("form").onsubmit=async e=>{
  e.preventDefault();
- let base={id:crypto.randomUUID(),tipo:tipo.value,controle:controle.value,descricao:descricao.value,categoria:categoria.value,valor:Number(valor.value),data:dataEl(),vencimento:vencimento.value||dataEl(),forma:forma.value,status:(status.value==="pendente"?"pendente":"pago"),recorrencia:recorrencia.value};
+ let base={id:crypto.randomUUID(),tipo:tipo.value,controle:controle.value,descricao:descricao.value,categoria:categoria.value,valor:Number(valor.value),data:dataEl(),vencimento:vencimento.value||dataEl(),forma:forma.value,status:(document.getElementById("status").value==="pendente"?"pendente":"pago"),recorrencia:recorrencia.value};
  let qtd=Math.max(1,Math.min(60,Number(quantidade.value)||1));
  for(let i=0;i<qtd;i++){let x={...base,id:crypto.randomUUID()};if(i>0){let d=new Date(base.vencimento+"T12:00:00");if(base.recorrencia==="mensal")d.setMonth(d.getMonth()+i);if(base.recorrencia==="semanal")d.setDate(d.getDate()+7*i);if(base.recorrencia==="anual")d.setFullYear(d.getFullYear()+i);x.vencimento=d.toISOString().slice(0,10);let bd=new Date(base.data+"T12:00:00");if(base.recorrencia==="mensal")bd.setMonth(bd.getMonth()+i);if(base.recorrencia==="semanal")bd.setDate(bd.getDate()+7*i);if(base.recorrencia==="anual")bd.setFullYear(bd.getFullYear()+i);x.data=bd.toISOString().slice(0,10);x.status="pendente"}data.push(stampRecord(x))}
  await save();alert("Lançamento salvo com sucesso.");limparForm();render();
@@ -612,7 +612,7 @@ document.getElementById("editForm").onsubmit=async e=>{
 };
 function notifications(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3":true,"1":true,"0":true,"over":true}'), msgs=[];activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{let n=daysUntil(x.vencimento);if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over))msgs.push(`${x.descricao}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`)});if(msgs.length&&"Notification"in window&&Notification.permission==="granted")new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\n")});}
 if("Notification"in window&&Notification.permission==="default")Notification.requestPermission().catch(()=>{});
-initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.12";});
+initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.13-TESTE";});
 </script>
 <script>
 
