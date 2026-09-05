@@ -1,0 +1,40 @@
+name: Repair inline JavaScript
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Repair malformed newline in notifications
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("index.html")
+          s = p.read_text(encoding="utf-8")
+          broken = 'join("\n")'
+          fixed = 'join("\\n")'
+          if broken not in s:
+              print("No malformed newline found; nothing to repair.")
+              raise SystemExit(0)
+          p.write_text(s.replace(broken, fixed), encoding="utf-8")
+          print("Repaired malformed JavaScript string literal.")
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No changes to commit."
+          else
+            git add index.html
+            git commit -m "Fix JavaScript syntax error blocking security initialization"
+            git push
+          fi
