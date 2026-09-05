@@ -1,4 +1,4 @@
-const APP_VERSION = "financeiro-v1.17";
+const APP_VERSION = "financeiro-v1.18";
 const CACHE_NAME = `meu-controle-${APP_VERSION}`;
 const APP_SHELL = ["./", "./index.html", "./manifest.json", "./logo.png", "./boot-fix.js"];
 
@@ -53,7 +53,7 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  if (url.pathname.endsWith("/boot-fix.js")) {
+  if (url.pathname.endsWith("/boot-fix.js") || url.pathname.endsWith("/config.js")) {
     event.respondWith(fetch(request, { cache: "no-store" }));
     return;
   }
