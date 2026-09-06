@@ -190,3 +190,11 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     }, 200);
   });
 })();
+
+// Carrega a tela Sobre de forma isolada, sem alterar a lógica principal do aplicativo.
+(function () {
+  const script = document.createElement("script");
+  script.src = "about.js";
+  script.defer = true;
+  document.head.appendChild(script);
+})();
