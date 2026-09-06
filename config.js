@@ -122,6 +122,7 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     const original = window.syncLogout;
     if (typeof original !== "function" || original.__safeSwitchWrappedV2) return false;
     async function safeLogout() {
+      // Limpa o cofre local somente depois que a sessão Supabase for encerrada.
       await original();
       clearLocalAccountState();
       localStorage.setItem(SWITCH_FLAG, "1");
@@ -136,6 +137,8 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     const originalLogin = window.syncLogin;
     if (typeof originalLogin !== "function" || originalLogin.__accountBindingWrapped) return false;
     async function guardedLogin() {
+      // Se ainda houver uma sessão ativa e o aplicativo estiver desbloqueado,
+      // não permitimos que uma nova conta receba os dados da conta anterior.
       try {
         if (window.__supabase && window.unlocked) {
           const { data: r } = await window.__supabase.auth.getUser();
@@ -152,7 +155,7 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
             }
           }
         }
-      } catch (e) {}
+      } catch (e) { /* o login original continua sendo a autoridade */ }
       return originalLogin();
     }
     guardedLogin.__accountBindingWrapped = true;
@@ -161,13 +164,18 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
   }
 
   window.addEventListener("DOMContentLoaded", function () {
+    // A rotina principal já foi declarada antes do DOMContentLoaded.
     installLogoutGuard();
     installAccountBindingGuard();
     showSwitchScreen();
     installReportFilter();
+
+    // Reaplica a tela de troca após initializeSecurity(), evitando que a rotina
+    // de inicialização sobrescreva o estado de sessão encerrada.
     setTimeout(showSwitchScreen, 50);
     setTimeout(showSwitchScreen, 250);
     setTimeout(showSwitchScreen, 750);
+
     let lastSignature = "";
     let attempts = 0;
     const timer = setInterval(function () {
