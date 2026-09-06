@@ -355,7 +355,7 @@ function setSecurityMode(mode){
    ?"Entre com sua conta de sincronização para acessar os dados desta conta."
    :"Digite sua senha para acessar seus dados financeiros.";
  btn.textContent=setup?"Criar proteção":restore?"Restaurar dados":ended?"Entrar na conta":"Desbloquear";
- if(cloudBtn){cloudBtn.style.display=(setup||restore||ended)?"block":"none";cloudBtn.textContent=ended?"☁️ Entrar na conta":"☁️ Já tenho dados na nuvem — entrar na conta";}
+ if(cloudBtn){cloudBtn.style.display=(setup||restore||ended||mode==="unlock")?"block":"none";cloudBtn.textContent=ended?"☁️ Entrar na conta":"☁️ Já tenho dados na nuvem — entrar na conta";}
  btn.style.display=ended?"none":"block";
 }
 function showLock(mode="unlock"){
@@ -761,7 +761,18 @@ async function syncLogin(){
  if(error){setSyncState("err");msg.textContent="Não foi possível entrar. Verifique os dados da conta.";return}
  setSyncState("ok");
  document.getElementById("syncPassword").value="";
- if(!unlocked){
+if(!unlocked){
+   /* Se este dispositivo já possui um cofre protegido, o login da conta
+      nao deve criar uma nova protecao nem substituir os dados locais.
+      Apenas mantemos a tela de desbloqueio. */
+   if(localStorage.getItem(SECURE_KEY)){
+     setSecurityMode("unlock");
+     msg.textContent="Conta conectada. Desbloqueie o aplicativo com sua senha de proteção para continuar.";
+     refreshSyncUI();
+     closeSyncModal();
+     return;
+   }
+
    const offered=await maybeOfferCloudRestore();
    if(offered){
      msg.textContent="Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.";
@@ -773,7 +784,7 @@ async function syncLogin(){
    refreshSyncUI();
    closeSyncModal();
    return;
- }
+}
  msg.textContent="Conta conectada. Sincronizando...";
  await syncNow(true);refreshSyncUI();
 }
