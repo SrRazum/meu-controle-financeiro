@@ -953,8 +953,17 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// Supabase is initialized only when the user opens the synchronization UI.
-
+// Inicializa o cliente de sincronização no carregamento, sem abrir a interface.
+// Assim, uma sessão já existente fica disponível para a sincronização automática.
+// Se houver uma conta conectada e este dispositivo ainda não tiver cofre local,
+// oferece a restauração sem substituir nem apagar dados locais.
+setTimeout(async () => {
+  const ready = await initCloud();
+  if (ready && !unlocked && !localStorage.getItem(SECURE_KEY)) {
+    const offered = await maybeOfferCloudRestore();
+    if (offered) showLock("restore");
+  }
+}, 0);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
