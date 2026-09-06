@@ -470,8 +470,10 @@ async function initializeSecurity(){
 const cats={entrada:["Vendas","Eventos","Salário","Transferência recebida","Outros"],saida:["Ingredientes","Bebidas","Embalagens","Energia","Água","Internet","Aluguel","Funcionários","Transporte","Manutenção","Marketing","Impostos","Compras","Transferência/Retirada","Outros"]};
 
 const brl=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
-const today=()=>new Date().toISOString().slice(0,10);
-async function save(){await secureSave();}
+/* Datas de calendário devem usar a data local do dispositivo. toISOString()
+   usa UTC e, no Brasil, pode virar o dia seguinte depois das 21h. */
+const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`};
+async function save(){await secureSave()}
 function fmtDate(s){return s?new Date(s+"T12:00:00").toLocaleDateString("pt-BR"):"—"}
 function daysUntil(s){return Math.ceil((new Date(s+"T12:00:00")-new Date(today()+"T12:00:00"))/86400000)}
 function statusClass(x){return x==="pago"?"paid":daysUntil(x.vencimento)<0?"overdue":"pending"}
@@ -517,7 +519,7 @@ function openNewFor(controleValor){
 }
 function homeCard(label,value,cls){return `<div class="card"><div class="label">${label}</div><div class="value ${cls}">${brl(value)}</div></div>`}
 function render(){
- let month=new Date().toISOString().slice(0,7);
+ let month=today().slice(0,7);
  const calc=(arr,t,c)=>arr.filter(x=>x.status==="pago"&&x.tipo===t&&(!c||x.controle===c)).reduce((s,x)=>s+x.valor,0);
  let ep=calc(data,"entrada","pessoal"), sp=calc(data,"saida","pessoal"), er=calc(data,"entrada","restaurante"), sr=calc(data,"saida","restaurante");
  let pendIn=activeData().filter(x=>x.status==="pendente"&&x.tipo==="entrada").reduce((s,x)=>s+x.valor,0);
@@ -616,7 +618,7 @@ document.getElementById("editForm").onsubmit=async e=>{
 };
 function notifications(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3":true,"1":true,"0":true,"over":true}'), msgs=[];activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{let n=daysUntil(x.vencimento);if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over))msgs.push(`${x.descricao}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`)});if(msgs.length&&"Notification"in window&&Notification.permission==="granted")new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\n")});}
 if("Notification"in window&&Notification.permission==="default")Notification.requestPermission().catch(()=>{});
-initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.13-TESTE";});
+initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.13";});
 </script>
 <script>
 
