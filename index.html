@@ -632,6 +632,9 @@ let __supabase=null;
 let __syncReady=false;
 let __syncBusy=false;
 let __cloudMismatch=false;
+ 
+const AUTO_SYNC_INTERVAL_MS=5*60*1000;
+let __lastSyncAt=0;
 
 function syncConfigured(){
  return !!(window.SUPABASE_URL && window.SUPABASE_PUBLISHABLE_KEY &&
@@ -641,6 +644,17 @@ function setSyncState(state){
  const d=document.getElementById("syncDot"); if(!d)return;
  d.className="sync-dot "+(state||"");
 }
+
+ function autoSync(){
+ if(!__syncReady || !unlocked || !navigator.onLine || __syncBusy)return;
+
+ const now=Date.now();
+ if(__lastSyncAt && now-__lastSyncAt<AUTO_SYNC_INTERVAL_MS)return;
+
+ __lastSyncAt=now;
+ syncNow(false);
+}
+ 
 async function openSyncModal(){
  await initCloud();
  document.getElementById("syncModal").classList.add("show");
