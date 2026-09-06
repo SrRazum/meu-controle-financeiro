@@ -473,7 +473,12 @@ const brl=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).fo
 /* Datas de calendário devem usar a data local do dispositivo. toISOString()
    usa UTC e, no Brasil, pode virar o dia seguinte depois das 21h. */
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`};
-async function save(){await secureSave()}
+async function save(){
+  await secureSave();
+  if(__syncReady && unlocked && navigator.onLine && !__syncBusy){
+    syncNow(false);
+  }
+}
 function fmtDate(s){return s?new Date(s+"T12:00:00").toLocaleDateString("pt-BR"):"—"}
 function daysUntil(s){return Math.ceil((new Date(s+"T12:00:00")-new Date(today()+"T12:00:00"))/86400000)}
 function statusClass(x){return x==="pago"?"paid":daysUntil(x.vencimento)<0?"overdue":"pending"}
