@@ -53,86 +53,10 @@ window.addEventListener("DOMContentLoaded", function () {
     btn.addEventListener("click", openAbout);
     headerControls.insertBefore(btn, headerControls.firstChild);
   }
+
+  /* A autenticação fica em arquivo próprio; este carregador mantém a tela
+     Sobre independente da lógica de login/cadastro. */
+  const authScript = document.createElement("script");
+  authScript.src = "auth.js";
+  document.head.appendChild(authScript);
 });
-
-/*
- * Revisão de autenticação — branch de teste.
- * Mantém a sincronização automática intacta e corrige somente a comunicação
- * dos fluxos Entrar/Criar conta. O e-mail continua sendo o identificador da
- * conta; contas duplicadas não são criadas pelo Auth do Supabase.
- */
-(function(){
-  function accountExistsResponse(data,error){
-    const msg=String((error&&error.message)||"").toLowerCase();
-    const code=String((error&&error.code)||"").toLowerCase();
-    if(msg.includes("already registered")||msg.includes("already exists")||code.includes("already")||code.includes("exists"))return true;
-    /* Com confirmação de e-mail habilitada, o Supabase pode devolver um
-       usuário ofuscado para um e-mail já cadastrado. Um novo cadastro
-       normalmente possui a identidade de e-mail; identities vazias indicam
-       a resposta ofuscada descrita pela API. */
-    return !!(data&&data.user&&Array.isArray(data.user.identities)&&data.user.identities.length===0&&!data.session);
-  }
-
-  window.syncLogin=async function(){
-    await initCloud();
-    if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
-    const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
-    const msg=document.getElementById("syncMsg");msg.textContent="";
-    if(!email||!password){msg.textContent="Informe e-mail e senha.";return}
-    setSyncState("busy");
-    const {error}=await __supabase.auth.signInWithPassword({email,password});
-    if(error){
-      setSyncState("err");
-      msg.textContent="Não foi possível entrar. A conta pode não existir ou a senha está incorreta. Se ainda não criou a conta, use “Criar conta”.";
-      return;
-    }
-    setSyncState("ok");
-    document.getElementById("syncPassword").value="";
-    if(!unlocked){
-      if(localStorage.getItem(SECURE_KEY)){
-        setSecurityMode("unlock");
-        msg.textContent="Conta conectada. Desbloqueie o aplicativo com sua senha de proteção para continuar.";
-        refreshSyncUI();
-        closeSyncModal();
-        return;
-      }
-      const offered=await maybeOfferCloudRestore();
-      if(offered){
-        msg.textContent="Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.";
-        setSecurityMode("restore");
-      }else{
-        setSecurityMode("setup");
-        msg.textContent="Conta conectada. Crie a proteção deste dispositivo para começar com os dados desta conta.";
-      }
-      refreshSyncUI();
-      closeSyncModal();
-      return;
-    }
-    msg.textContent="Conta conectada. Sincronizando...";
-    await syncNow(true);refreshSyncUI();
-  };
-
-  window.syncSignup=async function(){
-    await initCloud();
-    if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
-    const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
-    const msg=document.getElementById("syncMsg");msg.textContent="";
-    if(!email||password.length<6){msg.textContent="Informe um e-mail e uma senha com pelo menos 6 caracteres.";return}
-    setSyncState("busy");
-    const {data,error}=await __supabase.auth.signUp({email,password});
-    if(error||accountExistsResponse(data,error)){
-      setSyncState("err");
-      msg.textContent="Esta conta já está cadastrada. Use “Entrar” para acessar e sincronizar seus dados.";
-      return;
-    }
-    setSyncState("ok");
-    document.getElementById("syncPassword").value="";
-    if(data.session){
-      msg.textContent="Conta criada. Seus dados locais serão preservados e sincronizados agora.";
-      await syncNow(true);
-    }else{
-      msg.textContent="Conta criada. Verifique o e-mail de confirmação. Seus dados locais permanecem neste dispositivo e serão sincronizados depois que você entrar.";
-    }
-    refreshSyncUI();
-  };
-})();
