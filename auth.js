@@ -15,6 +15,7 @@
     const desc=document.getElementById("lockDescription");
     const button=document.getElementById("unlockButton");
     const second=document.getElementById("unlockPassword2");
+    const localInput=document.getElementById("unlockPassword");
     const cloudBtn=document.getElementById("lockCloudBtn");
     const msg=document.getElementById("lockMsg");
     if(!title||!desc||!button||!cloudBtn||!msg)return;
@@ -23,9 +24,35 @@
     button.style.display="block";
     button.textContent="Manter dados deste dispositivo";
     if(second){second.style.display="none";second.required=false}
+    if(localInput)localInput.placeholder="Senha dos dados deste dispositivo";
+
+    let cloudInput=document.getElementById("cloudUnlockPassword");
+    if(!cloudInput){
+      cloudInput=document.createElement("input");
+      cloudInput.id="cloudUnlockPassword";
+      cloudInput.type="password";
+      cloudInput.autocomplete="off";
+      cloudInput.minLength=6;
+      cloudInput.placeholder="Senha de proteção dos dados da nuvem";
+      cloudInput.style.display="none";
+      cloudInput.style.marginTop="10px";
+      cloudInput.style.width="100%";
+      if(localInput&&localInput.parentNode)localInput.parentNode.insertBefore(cloudInput,msg);
+    }
+
     cloudBtn.style.display="block";
     cloudBtn.textContent="☁️ Usar dados da nuvem neste dispositivo";
-    cloudBtn.onclick=useCloudDataOnThisDevice;
+    cloudBtn.onclick=function(){
+      const visible=cloudInput.style.display!=="none";
+      if(!visible){
+        cloudInput.style.display="block";
+        msg.style.color="#7a4b00";
+        msg.textContent="Informe a senha de proteção usada pelos dados da nuvem.";
+        cloudInput.focus();
+        return;
+      }
+      useCloudDataOnThisDevice();
+    };
     msg.style.color="#7a4b00";
     msg.textContent="Nada foi apagado. Escolha se deseja manter os dados locais ou carregar os dados da nuvem.";
   }
@@ -33,15 +60,15 @@
   async function useCloudDataOnThisDevice(){
     const msg=document.getElementById("lockMsg");
     const cloudBtn=document.getElementById("lockCloudBtn");
-    const passwordInput=document.getElementById("unlockPassword");
+    const cloudInput=document.getElementById("cloudUnlockPassword");
     if(!__supabase){
       if(msg)msg.textContent="Entre na conta de sincronização antes de usar os dados da nuvem.";
       return;
     }
-    const p=passwordInput?passwordInput.value:"";
+    const p=cloudInput?cloudInput.value:"";
     if(p.length<6){
-      if(msg)msg.textContent="Digite a senha de proteção usada para os dados da nuvem no campo acima.";
-      if(passwordInput)passwordInput.focus();
+      if(msg){msg.style.color="#991b1b";msg.textContent="Digite a senha de proteção dos dados da nuvem no campo indicado.";}
+      if(cloudInput)cloudInput.focus();
       return;
     }
     if(cloudBtn){cloudBtn.disabled=true;cloudBtn.textContent="☁️ Verificando dados da nuvem..."}
