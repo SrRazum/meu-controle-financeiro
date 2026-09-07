@@ -1,4 +1,4 @@
-const APP_VERSION = "financeiro-v1.13";
+const APP_VERSION = "financeiro-v1.14";
 const CACHE_NAME = `meu-controle-${APP_VERSION}`;
 const APP_SHELL = ["./", "./index.html", "./manifest.json", "./logo.png"];
 self.addEventListener("install", event => {
