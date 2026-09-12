@@ -1,7 +1,7 @@
 // Configuração do Supabase para o Meu Controle Financeiro.
-// V1.15 desenvolvimento: configurar um projeto Supabase isolado antes dos testes.
-window.SUPABASE_URL = ""; // Set an isolated TEST project URL.
-window.SUPABASE_PUBLISHABLE_KEY = ""; // TEST project publishable key only.
+// V1.15 desenvolvimento — projeto Supabase isolado de TESTES.
+window.SUPABASE_URL = "https://lxsvcmsdxcwiwyzexyyc.supabase.co";
+window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_veiVnXHTgGGl7QJDQhmoMA_4s7J3He0";
 
 (function () {
 

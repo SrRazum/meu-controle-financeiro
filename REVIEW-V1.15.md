@@ -19,7 +19,7 @@ Base verificada: `v1.13-producao` e `v1.14-cadastro-conta-revisao` apontavam par
 | `sync-store.js` | IndexedDB por UID; registros e fila persistidos na mesma transação; alterações sucessivas coalescidas sem perder a base original; confirmação de envio por ID de operação; proteção contra gravação de aba desatualizada. |
 | `supabase/migrations/202609120001_account_sync.sql` | Nova tabela `finance_records_v2`, RLS de leitura por `auth.uid()`, escrita somente pela função `finance_sync_v2`. Função valida o UID esperado, serializa requisições da conta, compara base/valor atual atomicamente e retorna conflitos sem sobrescrever. Não modifica `finance_vault`. |
 | `index.html` | Retira criação de senha e bloqueio por inatividade; mantém somente funções criptográficas para ler dados antigos; carrega autenticação explicitamente; indica pendências; escapa textos inseridos no HTML; impede salvar formulário aberto antes de uma atualização concorrente. |
-| `config.js` | Remove interceptadores de conta e exclusões locais. Preserva filtro de relatórios. URL/chave ficam vazias de propósito: configurar projeto de TESTE isolado. |
+| `config.js` | Remove interceptadores de conta e exclusões locais. Preserva filtro de relatórios. Configurado com URL/chave pública do projeto de TESTES `lxsvcmsdxcwiwyzexyyc`, fornecidas pelo usuário. |
 | `sw.js` | Cache completo da versão, inclusive cliente Supabase; HTML e scripts da mesma versão; atualização aguarda ação do usuário; nomes de cache por escopo. Não acessa tokens nem envia registros. |
 | `about.js` | Remove carregamento indireto de autenticação e atualiza descrição da versão/proteção. |
 | `vendor/` | Supabase JS 2.57.4 UMD fixado localmente, com licença MIT. SHA-256 do download: `7e94b62086deecef8c0ba3b38f514e2a1944ff6c81d92fb3ff967828c406c38f`. |
@@ -58,7 +58,7 @@ V1.14 e V1.15 usam modelos de armazenamento distintos e **não sincronizam entre
 
 ## Validação executada e pendente
 
-Na continuação de 12/09/2026, foi confirmado que ainda não existe um projeto Supabase separado de testes. O [guia de preparação](SETUP-TESTES.md) explica como criar e configurar esse ambiente; `npm run dev` abre uma prévia restrita ao computador local.
+Na continuação de 12/09/2026, o usuário forneceu a URL e a chave pública do projeto separado `lxsvcmsdxcwiwyzexyyc`, agora configurado. A API de autenticação respondeu com cadastro por e-mail habilitado e confirmação obrigatória. A tabela `finance_records_v2` e a função `finance_sync_v2` retornaram HTTP 401 / `42501` (permissão negada) para chamadas sem usuário autenticado. Isso confirma a presença desses objetos e o bloqueio anônimo, mas não comprova a versão exata do SQL instalado nem as regras para usuários autenticados. Nenhuma conta foi criada, nenhum lançamento foi enviado e nenhum SQL remoto foi executado por essas verificações. O [guia de preparação](SETUP-TESTES.md) documenta o ambiente; `npm run dev` abre uma prévia restrita ao computador local.
 
 Executado:
 
