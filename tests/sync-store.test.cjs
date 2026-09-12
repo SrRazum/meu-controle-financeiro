@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const S=require('../sync-store.js');
-const rec=(id,value)=>({id,valor:value});
+const rec=(id,value)=>({id,valor:value,descricao:'Teste',categoria:'Outros',data:'2026-09-12',tipo:'entrada',controle:'pessoal',status:'pago'});
 test('JSON object key order does not create a false conflict',()=>{
   assert.equal(S.equal({id:'a',valor:1},{valor:1,id:'a'}),true);
 });
