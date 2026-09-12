@@ -2,6 +2,8 @@
 
 Esta branch parte da v1.14 promovida (`da479659`) e implementa inicialização por conta e fila offline. **Não está pronta para produção.** Configure um Supabase de teste isolado e leia [a revisão, migração e testes pendentes](REVIEW-V1.15.md). A configuração pública está vazia por segurança.
 
+Para continuar: [criar e configurar o ambiente de testes](SETUP-TESTES.md). Prévia local: `npm run dev`. Testes: `npm install`, `npm test` e `npm run test:browser`.
+
 O texto abaixo é a documentação histórica da V1.13, preservada como referência. As garantias de criptografia e testes da versão antiga não se aplicam automaticamente à V1.15.
 
 ## Documentação histórica — V1.13

@@ -75,8 +75,29 @@ const server=http.createServer(async(req,res)=>{
  assert.equal(await page.evaluate(()=>data.length),0);
  assert.equal(await page.evaluate(async()=>Object.keys((await FinanceStore.read('alice@test')).pending).length),1);
  assert.equal(remote.get('bob@test')?.size||0,0);
+ // Exercise the actual entry form; descriptions must remain text, not executable HTML.
+ await context.setOffline(true);
+ await page.locator('nav button[data-view="lancamento"]').click();
+ await page.locator('#descricao').fill('<img src=x onerror="window.injected=true">');
+ await page.locator('#valor').fill('25.50');await page.locator('#data').fill('2026-09-12');
+ await page.locator('#form button[type="submit"]').click();
+ await until(()=>data.length===1);
+ assert.equal(await page.evaluate(()=>data[0].valor),25.5);
+ assert.equal(await page.evaluate(()=>window.injected),undefined);
+ await page.locator('nav button[data-view="movimentacoes"]').click();
+ assert.equal(await page.locator('#tbody img').count(),0);
+ await page.locator('#tbody .btn-edit').click();
+ await page.locator('#eValor').fill('26.50');
+ await page.locator('#editForm button[type="submit"]').click();
+ await until(()=>data[0].valor===26.5);
+ await page.locator('#tbody .btn-delete').click();await until(()=>data[0].deleted===true);
+ await page.reload();await page.waitForFunction(()=>unlocked);
+ assert.equal(await page.evaluate(()=>activeData().length),0);
+ assert.equal(await page.evaluate(async()=>Object.keys((await FinanceStore.read('bob@test')).pending).length),1);
+ await context.setOffline(false);await until(async()=>Object.keys((await FinanceStore.read('bob@test')).pending).length===0);
+ assert.equal([...remote.get('bob@test').values()][0].deleted,true);
  assert.deepEqual(errors,[]);
- console.log('PASS: browser startup, IndexedDB offline reload, reconnect upload, conflict resolution, logout queue retention, account isolation; '+calls+' mock sync requests.');
+ console.log('PASS: browser startup, IndexedDB offline reload, reconnect upload, conflict resolution, logout queue retention, account isolation, create/edit/delete forms, safe text rendering; '+calls+' mock sync requests.');
  await context.close();
  }finally{await browser.close();server.close();}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1;});

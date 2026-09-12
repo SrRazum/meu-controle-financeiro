@@ -58,12 +58,22 @@ V1.14 e V1.15 usam modelos de armazenamento distintos e **não sincronizam entre
 
 ## Validação executada e pendente
 
-Executado: testes automatizados da fila e testes em Edge/Chromium headless com IndexedDB e service worker reais, mas autenticação e servidor simulados. Cobertura: abertura, gravação offline, reabertura offline, envio ao reconectar, revisão de conflito, preservação da fila ao sair e isolamento ao entrar em outra conta. Verificação de sintaxe JavaScript e `git diff --check`.
+Na continuação de 12/09/2026, foi confirmado que ainda não existe um projeto Supabase separado de testes. O [guia de preparação](SETUP-TESTES.md) explica como criar e configurar esse ambiente; `npm run dev` abre uma prévia restrita ao computador local.
+
+Executado:
+
+- Migração SQL executada em PostgreSQL local descartável ([PGlite](https://pglite.dev/docs/about)), com o esquema de autenticação simulado: isolamento A/B, acesso anônimo negado, escrita direta negada, UID de outra conta rejeitado, repetição idempotente, conflitos, exclusões, reversão atômica de lote inválido e cofre antigo intacto.
+- Testes da fila e de respostas atrasadas: confirmação de envio não descarta edição posterior; recuperação após erro de gravação não exibe dados da conta anterior; saída offline mantém fila.
+- Teste com o cliente Supabase 2.57.4 real e transporte simulado: logout offline remove os tokens locais e não restaura a sessão encerrada.
+- Edge/Chromium headless com IndexedDB e service worker reais, mas autenticação e servidor simulados: abertura, gravação e reabertura offline, envio ao reconectar, revisão de conflito, logout e isolamento A/B. Os formulários de criação, edição e exclusão também são exercitados, incluindo texto que não deve ser interpretado como HTML.
+- Verificação de sintaxe JavaScript e `git diff --check`.
+
+As verificações adicionais levaram a correções na validação de registros/datas/valores no servidor e na fila, no isolamento de uma resposta tardia após falha de gravação e no logout offline. A implementação fixada do Supabase retornava antes de limpar os tokens quando o logout remoto falhava; agora a aplicação garante a limpeza local, mantém um marcador de sessão encerrada e avisa quando não consegue confirmar a saída no servidor. Uma saída sem conexão não garante revogar a sessão no servidor. Também foi corrigido um aviso antigo no formulário que ainda prometia criptografia e bloqueio automático.
 
 **Ainda não validado para produção:**
 
-- Aplicação e execução do SQL em PostgreSQL/Supabase real; RLS para anônimo, usuários A/B e tentativas diretas de escrita; concorrência de duas sessões e idempotência após perda da resposta.
-- Cadastro real, confirmação de e-mail, senha incorreta, expiração/renovação de sessão e retorno offline com token expirado. O teste de navegador usa um cliente simulado.
+- Aplicação do SQL no Supabase remoto e validação das permissões efetivas via API. Concorrência entre conexões independentes ainda exige teste: PGlite usa um único backend, portanto não comprova a concorrência real do serviço.
+- Cadastro real, confirmação de e-mail, senha incorreta, expiração/renovação de sessão e retorno offline com token expirado. O teste do SDK também usa transporte simulado.
 - Dois dispositivos reais, alternância entre contas durante requisições e outra aba já aberta; edição versus exclusão concorrente.
 - Importação de cofres reais representativos, senha errada, conflito de IDs, reimportação e conferência dos totais.
 - Falta de espaço, armazenamento indisponível/corrompido, remoção de dados do site e grandes volumes.

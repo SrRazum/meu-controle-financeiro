@@ -1,10 +1,15 @@
 /* Account-first onboarding. Never writes to finance_vault. */
 let __supabase=null, __syncBusy=false, account=null, epoch=0, view=[], bootPromise;
 const LAST_ACCOUNT='finance-last-account-v2';
+const AUTH_STORAGE='finance-auth-v2',SIGNED_OUT='finance-signed-out-v2';
+function clearLocalSession(){
+  [AUTH_STORAGE,AUTH_STORAGE+'-user',AUTH_STORAGE+'-code-verifier',LAST_ACCOUNT].forEach(key=>localStorage.removeItem(key));
+}
 let signingOut=false;
 let retryAt=0, failures=0;
 let syncRequested=false;
 function usableSession(session){
+  if(signingOut||localStorage.getItem(SIGNED_OUT)==='1')return null;
   if(session?.user){localStorage.setItem(LAST_ACCOUNT,JSON.stringify(session.user));return session;}
   if(!navigator.onLine&&!signingOut){
     try{const user=JSON.parse(localStorage.getItem(LAST_ACCOUNT));if(user?.id)return {user};}catch(e){}
@@ -40,7 +45,7 @@ function display(state){
 }
 async function activate(session){
   const next=session?.user||null;
-  if(account?.id===next?.id)return;
+  if(account?.id===next?.id&&(unlocked||!next))return;
   const ticket=++epoch;account=next;unlocked=false;
   retryAt=0;failures=0;
   data=[];view=[];render();closeEdit();limparForm();$('editForm').reset();
@@ -53,18 +58,23 @@ async function activate(session){
     display(state);unlocked=true;$('lockScreen').classList.add('hidden');closeSyncModal();
     navigator.storage?.persist?.().catch(()=>{});
     setTimeout(()=>syncNow(),0);
-  }catch(e){statusTextSync('Não foi possível abrir o armazenamento local. '+e.message,'err');}
+  }catch(e){if(ticket===epoch)statusTextSync('Não foi possível abrir o armazenamento local. '+e.message,'err');}
 }
 function initCloud(){
   return bootPromise ||= (async()=>{
     if(!window.SUPABASE_URL||!window.SUPABASE_PUBLISHABLE_KEY||!window.supabase){statusTextSync('Configure um projeto Supabase de testes para iniciar.','err');return false;}
-    __supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{
-      auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,storageKey:'finance-auth-v2'}
-    });
-    __supabase.auth.onAuthStateChange((event,session)=>{
-      void activate(usableSession(session));
-      if(event==='TOKEN_REFRESHED')setTimeout(()=>syncNow(),0);
-    });
+    if(localStorage.getItem(SIGNED_OUT)==='1')clearLocalSession();
+    if(!navigator.onLine)await activate(usableSession(null));
+    if(!__supabase){
+      __supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{
+        auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,storageKey:AUTH_STORAGE}
+      });
+      __supabase.auth.onAuthStateChange((event,session)=>{
+        if(event==='SIGNED_OUT')localStorage.removeItem(LAST_ACCOUNT);
+        void activate(usableSession(session));
+        if(event==='TOKEN_REFRESHED')setTimeout(()=>syncNow(),0);
+      });
+    }
     const {data:result,error}=await __supabase.auth.getSession();
     if(error&&!navigator.onLine){await activate(usableSession(null));return false;}
     if(error)throw error;
@@ -74,10 +84,11 @@ function initCloud(){
 async function openSyncModal(){ $('syncModal').classList.add('show');await initCloud();refreshSyncUI(); }
 function closeSyncModal(){ $('syncModal').classList.remove('show'); }
 async function authenticate(signup){
-  await initCloud();if(!__supabase||account)return;
+  await initCloud();if(!__supabase||account||signingOut)return;
   const email=$('syncEmail').value.trim(),password=$('syncPassword').value;
   if(!email||password.length<6){statusTextSync('Informe e-mail e senha de pelo menos 6 caracteres.','err');return;}
   try{
+    localStorage.removeItem(SIGNED_OUT);
     const {data:result,error}=await __supabase.auth[signup?'signUp':'signInWithPassword']({email,password});
     if(error)throw error;
     $('syncPassword').value='';
@@ -88,14 +99,17 @@ async function authenticate(signup){
 function syncLogin(){return authenticate(false);}
 function syncSignup(){return authenticate(true);}
 async function syncLogout(){
-  if(!__supabase)return;
-  signingOut=true;localStorage.removeItem(LAST_ACCOUNT);
+  if(!__supabase||signingOut)return;
+  signingOut=true;localStorage.setItem(SIGNED_OUT,'1');localStorage.removeItem(LAST_ACCOUNT);
   await activate(null);
   try{
+    // The pinned SDK returns early on failed remote logout. Clear offline tokens
+    // first so a disconnected logout cannot silently reopen on the next launch.
+    if(!navigator.onLine)clearLocalSession();
     const {error}=await __supabase.auth.signOut({scope:'local'});
     if(error)throw error;
-  }catch(e){statusTextSync('Não foi possível encerrar a sessão. Tente novamente antes de compartilhar o dispositivo.','err');}
-  finally{signingOut=false;}
+  }catch(e){statusTextSync('Sessão encerrada neste dispositivo. Não foi possível confirmar a saída no servidor.','');}
+  finally{clearLocalSession();signingOut=false;}
 }
 async function save(){
   if(!account||!unlocked)throw Error('Entre na conta antes de salvar.');
@@ -107,7 +121,8 @@ async function save(){
     if(ticket===epoch){
       alert('Alteração não salva. '+e.message);
       data=FinanceStore.copy(before);view=FinanceStore.copy(before);render();
-      try{display(await FinanceStore.read(uid));}catch(readError){statusTextSync('Armazenamento indisponível. Não feche o formulário antes de copiar os dados.','err');}
+      try{const state=await FinanceStore.read(uid);if(ticket===epoch)display(state);}
+      catch(readError){if(ticket===epoch)statusTextSync('Armazenamento indisponível. Não feche o formulário antes de copiar os dados.','err');}
     }
     throw e;
   }
@@ -122,7 +137,7 @@ async function syncNow(manual=false){
     const run=async()=>{
       const state=await FinanceStore.read(uid);
       if(ticket!==epoch)return;
-      const sent=Object.values(state.pending).filter(x=>!state.conflicts[x.value.id]).slice(0,1000);
+      const sent=Object.values(state.pending).filter(x=>!Object.hasOwn(state.conflicts,x.value.id)).slice(0,1000);
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
       let result;
       try{result=await __supabase.rpc('finance_sync_v2',{expected_user:uid,operations:sent}).abortSignal(controller.signal);}
@@ -179,6 +194,7 @@ async function importLegacy(source){
   finally{$('syncRecoverPassword').value='';}
 }
 window.addEventListener('online',()=>syncNow(true));
+window.addEventListener('storage',event=>{if(event.key===SIGNED_OUT&&event.newValue==='1')void activate(null);});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncNow(true);});
 setInterval(()=>syncNow(),15000);
 window.addEventListener('DOMContentLoaded',()=>{ $('appVersion').textContent='V1.15 · desenvolvimento';refreshSyncUI();void initCloud(); });
