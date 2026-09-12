@@ -1,6 +1,6 @@
 # Meu Controle Financeiro — V1.15 em desenvolvimento
 
-Esta branch parte da v1.14 promovida (`da479659`) e implementa inicialização por conta e fila offline. **Não está pronta para produção.** Configure um Supabase de teste isolado e leia [a revisão, migração e testes pendentes](REVIEW-V1.15.md). A configuração pública está vazia por segurança.
+Esta branch parte da v1.14 promovida (`da479659`) e implementa inicialização por conta e fila offline. **Não está pronta para produção.** O projeto Supabase de testes `lxsvcmsdxcwiwyzexyyc` está configurado. Leia [a revisão, migração e testes pendentes](REVIEW-V1.15.md).
 
 Para continuar: [criar e configurar o ambiente de testes](SETUP-TESTES.md). Prévia local: `npm run dev`. Testes: `npm install`, `npm test` e `npm run test:browser`.
 
