@@ -1,13 +1,9 @@
 // Configuração do Supabase para o Meu Controle Financeiro.
-// Esta configuração é usada somente na branch de teste V1.13.
-window.SUPABASE_URL = "https://prrgajnjkknstsaokgwy.supabase.co";
-window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
+// V1.15 desenvolvimento: configurar um projeto Supabase isolado antes dos testes.
+window.SUPABASE_URL = ""; // Set an isolated TEST project URL.
+window.SUPABASE_PUBLISHABLE_KEY = ""; // TEST project publishable key only.
 
 (function () {
-  const SWITCH_FLAG = "controle_financeiro_account_switch_pending";
-  const SECURE_KEY = "controle_financeiro_secure_v1";
-  const LEGACY_KEY = "controle_financeiro_v1";
-  const BOUND_ACCOUNT_KEY = "controle_financeiro_bound_account_v1";
 
   function getData() {
     try { return typeof activeData === "function" ? (activeData() || []) : []; }
@@ -59,7 +55,7 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     });
     const body = document.getElementById("catBody");
     if (body) body.innerHTML = Object.entries(map)
-      .map(([k, v]) => `<tr><td>${k}</td><td class="green">${money(v.e)}</td><td class="red">${money(v.s)}</td></tr>`).join("")
+      .map(([k, v]) => `<tr><td>${escapeHTML(k)}</td><td class="green">${money(v.e)}</td><td class="red">${money(v.s)}</td></tr>`).join("")
       || '<tr><td colspan="3" class="empty">Sem dados registrados.</td></tr>';
   }
 
@@ -95,86 +91,8 @@ window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std
     window.render();
   }
 
-  function showSwitchScreen() {
-    if (localStorage.getItem(SWITCH_FLAG) !== "1") return;
-    const title = document.getElementById("lockTitle");
-    const desc = document.getElementById("lockDescription");
-    const button = document.getElementById("unlockButton");
-    const second = document.getElementById("unlockPassword2");
-    const cloudBtn = document.getElementById("lockCloudBtn");
-    const msg = document.getElementById("lockMsg");
-    if (title) title.textContent = "Sessão encerrada";
-    if (desc) desc.textContent = "Entre com uma conta para acessar seus dados financeiros.";
-    if (button) { button.style.display = "block"; button.textContent = "Criar proteção neste dispositivo"; }
-    if (second) { second.style.display = "block"; second.required = true; }
-    if (cloudBtn) { cloudBtn.style.display = "block"; cloudBtn.textContent = "☁️ Entrar / trocar de conta"; }
-    if (msg) msg.textContent = "Sessão encerrada. Os dados da conta anterior não estão visíveis.";
-  }
-
-  function clearLocalAccountState() {
-    try { localStorage.removeItem(SECURE_KEY); } catch (e) {}
-    try { localStorage.removeItem(LEGACY_KEY); } catch (e) {}
-    try { localStorage.removeItem(BOUND_ACCOUNT_KEY); } catch (e) {}
-    try { if (Array.isArray(window.data)) window.data = []; } catch (e) {}
-  }
-
-  function installLogoutGuard() {
-    const original = window.syncLogout;
-    if (typeof original !== "function" || original.__safeSwitchWrappedV2) return false;
-    async function safeLogout() {
-      // Limpa o cofre local somente depois que a sessão Supabase for encerrada.
-      await original();
-      clearLocalAccountState();
-      localStorage.setItem(SWITCH_FLAG, "1");
-      location.reload();
-    }
-    safeLogout.__safeSwitchWrappedV2 = true;
-    window.syncLogout = safeLogout;
-    return true;
-  }
-
-  function installAccountBindingGuard() {
-    const originalLogin = window.syncLogin;
-    if (typeof originalLogin !== "function" || originalLogin.__accountBindingWrapped) return false;
-    async function guardedLogin() {
-      // Se ainda houver uma sessão ativa e o aplicativo estiver desbloqueado,
-      // não permitimos que uma nova conta receba os dados da conta anterior.
-      try {
-        if (window.__supabase && window.unlocked) {
-          const { data: r } = await window.__supabase.auth.getUser();
-          if (r && r.user) {
-            const email = (document.getElementById("syncEmail")?.value || "").trim().toLowerCase();
-            if (email && r.user.email && email !== r.user.email.toLowerCase()) {
-              localStorage.setItem(SWITCH_FLAG, "1");
-              clearLocalAccountState();
-              window.__financePassword = null;
-              window.unlocked = false;
-              await window.__supabase.auth.signOut();
-              location.reload();
-              return;
-            }
-          }
-        }
-      } catch (e) { /* o login original continua sendo a autoridade */ }
-      return originalLogin();
-    }
-    guardedLogin.__accountBindingWrapped = true;
-    window.syncLogin = guardedLogin;
-    return true;
-  }
-
   window.addEventListener("DOMContentLoaded", function () {
-    // A rotina principal já foi declarada antes do DOMContentLoaded.
-    installLogoutGuard();
-    installAccountBindingGuard();
-    showSwitchScreen();
     installReportFilter();
-
-    // Reaplica a tela de troca após initializeSecurity(), evitando que a rotina
-    // de inicialização sobrescreva o estado de sessão encerrada.
-    setTimeout(showSwitchScreen, 50);
-    setTimeout(showSwitchScreen, 250);
-    setTimeout(showSwitchScreen, 750);
 
     let lastSignature = "";
     let attempts = 0;

@@ -1,4 +1,10 @@
-# Meu Controle Financeiro — V1.13
+# Meu Controle Financeiro — V1.15 em desenvolvimento
+
+Esta branch parte da v1.14 promovida (`da479659`) e implementa inicialização por conta e fila offline. **Não está pronta para produção.** Configure um Supabase de teste isolado e leia [a revisão, migração e testes pendentes](REVIEW-V1.15.md). A configuração pública está vazia por segurança.
+
+O texto abaixo é a documentação histórica da V1.13, preservada como referência. As garantias de criptografia e testes da versão antiga não se aplicam automaticamente à V1.15.
+
+## Documentação histórica — V1.13
 
 Aplicativo web/PWA de controle financeiro com armazenamento local e sincronização via Supabase.
 

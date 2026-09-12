@@ -21,13 +21,14 @@ window.addEventListener("DOMContentLoaded", function () {
     <div class="about-box">
       <img class="about-logo" src="logo.png" alt="Logo Meu Controle Financeiro">
       <h2>Meu Controle Financeiro</h2>
-      <div class="about-version">V1.13</div>
+      <div class="about-version">V1.15 — desenvolvimento</div>
       <p><strong>Proprietário / Desenvolvedor</strong><br>SrRazum</p>
       <p>© 2026 SrRazum. Todos os direitos reservados.</p>
       <div class="about-credits">
         <strong>Tecnologias e serviços</strong>
         <p>HTML5, CSS3 e JavaScript — estrutura, apresentação e lógica da aplicação.</p>
-        <p>Web Crypto API — criptografia dos dados armazenados localmente.</p>
+        <p>IndexedDB — dados e fila offline separados por conta.</p>
+        <p>Web Crypto API — leitura dos cofres antigos durante importação.</p>
         <p>Supabase — autenticação, armazenamento e sincronização dos dados.</p>
         <p>Progressive Web App (PWA) / Service Worker — instalação e funcionamento como aplicativo web.</p>
         <p>GitHub Pages — hospedagem da aplicação.</p>
@@ -54,9 +55,4 @@ window.addEventListener("DOMContentLoaded", function () {
     headerControls.insertBefore(btn, headerControls.firstChild);
   }
 
-  /* A autenticação fica em arquivo próprio; este carregador mantém a tela
-     Sobre independente da lógica de login/cadastro. */
-  const authScript = document.createElement("script");
-  authScript.src = "auth.js";
-  document.head.appendChild(authScript);
 });

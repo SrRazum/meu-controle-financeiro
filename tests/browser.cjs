@@ -1,0 +1,82 @@
+/* Integration tests use a fake auth/sync transport; no real accounts or cloud writes.
+ * Run with Playwright installed: node tests/browser.cjs
+ * Optional BROWSER_PATH points to an installed Chromium/Edge executable.
+ */
+const {chromium}=require('playwright');
+const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'..');
+const remote=new Map();let calls=0;
+const fakeSDK=`window.supabase={createClient(){
+let cb;const session=()=>JSON.parse(localStorage.getItem('test-session')||'null');
+return {auth:{onAuthStateChange(f){cb=f;return{}},async getSession(){return {data:{session:session()}}},
+async signInWithPassword({email}){const s={user:{id:email,email}};localStorage.setItem('test-session',JSON.stringify(s));cb('SIGNED_IN',s);return {data:{session:s}}},
+async signOut(){localStorage.removeItem('test-session');cb('SIGNED_OUT',null);return{};}},
+rpc(name,args){return {async abortSignal(signal){const r=await fetch('/sync',{method:'POST',signal,body:JSON.stringify({...args,user:session()?.user.id})});return {data:await r.json()}}}},
+from(){throw Error('Legacy API disabled in test');}}}};`;
+const server=http.createServer(async(req,res)=>{
+ if(req.url==='/sync'){
+   let raw='';for await(const chunk of req)raw+=chunk;
+   const body=JSON.parse(raw);assert.equal(body.user,body.expected_user);calls++;
+   const rows=remote.get(body.user)||new Map();remote.set(body.user,rows);
+   const accepted=[],conflicts={};
+   const S=require('../sync-store.js');
+   for(const op of body.operations){const old=rows.get(op.value.id)||null;
+     if(S.equal(old,op.value)||S.equal(old,op.base)){rows.set(op.value.id,op.value);accepted.push(op.opId);}
+     else conflicts[op.value.id]={remote:old};
+   }
+   res.setHeader('Content-Type','application/json');res.end(JSON.stringify({accepted,conflicts,records:[...rows.values()]}));return;
+ }
+ const file=path.join(root,req.url==='/'?'index.html':req.url.split('?')[0]);
+ if(!file.startsWith(root)||!fs.existsSync(file)){res.writeHead(404);res.end();return;}
+ res.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.html')?'text/html':'application/octet-stream');
+ if(file.endsWith('config.js'))res.end(fs.readFileSync(file,'utf8')+'\nwindow.SUPABASE_URL="https://test.invalid";window.SUPABASE_PUBLISHABLE_KEY="test";');
+ else if(file.endsWith(path.join('vendor','supabase.js')))res.end(fakeSDK);
+ else res.end(fs.readFileSync(file));
+});
+(async()=>{
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const browser=await chromium.launch({headless:true,...(process.env.BROWSER_PATH?{executablePath:process.env.BROWSER_PATH}:{})});
+ try{
+ const context=await browser.newContext(),page=await context.newPage(),errors=[];
+ const until=async fn=>{for(let i=0;i<450;i++){if(await page.evaluate(fn))return;await new Promise(r=>setTimeout(r,100));}throw Error('Async condition timed out: '+await page.locator('#syncMsg').textContent());};
+ page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
+ const url='http://127.0.0.1:'+server.address().port;
+ await page.goto(url);await page.waitForFunction(()=>typeof syncLogin==='function');
+ await page.getByRole('button',{name:'Entrar / criar conta',exact:true}).click();
+ await page.locator('#syncEmail').fill('alice@test');await page.locator('#syncPassword').fill('secret123');
+ await page.getByRole('button',{name:'Entrar',exact:true}).click();
+ await page.waitForFunction(()=>unlocked);
+ await page.evaluate(()=>navigator.serviceWorker.ready);
+ // Initial controller claim must not interrupt the onboarding form.
+ await page.waitForFunction(()=>unlocked&&navigator.serviceWorker.controller);
+ await context.setOffline(true);
+ await page.evaluate(async()=>{data.push(stampRecord({id:'a',descricao:'Offline',tipo:'entrada',controle:'pessoal',categoria:'Outros',valor:12,data:'2026-09-11',vencimento:'2026-09-11',status:'pago'}));await save();});
+ await page.reload();await page.waitForFunction(()=>unlocked);
+ assert.equal(await page.evaluate(()=>data[0].descricao),'Offline');
+ assert.equal(await page.evaluate(async()=>Object.keys((await FinanceStore.read('alice@test')).pending).length),1);
+ await context.setOffline(false);await page.evaluate(()=>syncNow());
+ await until(async()=>Object.keys((await FinanceStore.read('alice@test')).pending).length===0);
+ assert.equal(remote.get('alice@test').get('a')?.valor,12,JSON.stringify({remote:[...remote.get('alice@test')],local:await page.evaluate(()=>FinanceStore.read('alice@test'))}));
+ // Divergent edits must become a visible conflict, not a silent last-write-wins.
+ await context.setOffline(true);
+ await page.evaluate(async()=>{data[0].valor=13;await save();});
+ remote.get('alice@test').set('a',{...remote.get('alice@test').get('a'),valor:99});
+ await context.setOffline(false);await page.evaluate(()=>syncNow());
+ await until(async()=>!!(await FinanceStore.read('alice@test')).conflicts.a);
+ await page.evaluate(()=>openSyncModal());
+ await page.getByRole('button',{name:'Usar versão da nuvem',exact:true}).click();
+ await page.waitForFunction(()=>data[0].valor===99);
+ // Logout retains offline queue; another account sees none of it.
+ await context.setOffline(true);await page.evaluate(async()=>{data[0].valor=100;await save();await syncLogout();});
+ assert.equal(await page.evaluate(()=>data.length),0);
+ await context.setOffline(false);await page.evaluate(()=>openSyncModal());
+ await page.locator('#syncEmail').fill('bob@test');await page.locator('#syncPassword').fill('secret123');
+ await page.getByRole('button',{name:'Entrar',exact:true}).click();await page.waitForFunction(()=>unlocked);
+ assert.equal(await page.evaluate(()=>data.length),0);
+ assert.equal(await page.evaluate(async()=>Object.keys((await FinanceStore.read('alice@test')).pending).length),1);
+ assert.equal(remote.get('bob@test')?.size||0,0);
+ assert.deepEqual(errors,[]);
+ console.log('PASS: browser startup, IndexedDB offline reload, reconnect upload, conflict resolution, logout queue retention, account isolation; '+calls+' mock sync requests.');
+ await context.close();
+ }finally{await browser.close();server.close();}
+})().catch(e=>{console.error(e);server.close();process.exitCode=1;});
