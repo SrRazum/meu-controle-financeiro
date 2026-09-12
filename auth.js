@@ -1,150 +1,184 @@
-/* Autenticação e cadastro — branch de revisão.
- * Este arquivo não altera a rotina de sincronização automática.
- * O e-mail é o identificador da conta no Supabase.
- */
-(function(){
-  function accountExistsResponse(data,error){
-    const msg=String((error&&error.message)||"").toLowerCase();
-    const code=String((error&&error.code)||"").toLowerCase();
-    if(msg.includes("already registered")||msg.includes("already exists")||code.includes("already")||code.includes("exists"))return true;
-    return !!(data&&data.user&&Array.isArray(data.user.identities)&&data.user.identities.length===0&&!data.session);
+/* Account-first onboarding. Never writes to finance_vault. */
+let __supabase=null, __syncBusy=false, account=null, epoch=0, view=[], bootPromise;
+const LAST_ACCOUNT='finance-last-account-v2';
+let signingOut=false;
+let retryAt=0, failures=0;
+let syncRequested=false;
+function usableSession(session){
+  if(session?.user){localStorage.setItem(LAST_ACCOUNT,JSON.stringify(session.user));return session;}
+  if(!navigator.onLine&&!signingOut){
+    try{const user=JSON.parse(localStorage.getItem(LAST_ACCOUNT));if(user?.id)return {user};}catch(e){}
   }
-
-  function showLocalCloudConflict(){
-    const title=document.getElementById("lockTitle");
-    const desc=document.getElementById("lockDescription");
-    const button=document.getElementById("unlockButton");
-    const second=document.getElementById("unlockPassword2");
-    const localInput=document.getElementById("unlockPassword");
-    const cloudBtn=document.getElementById("lockCloudBtn");
-    const msg=document.getElementById("lockMsg");
-    if(!title||!desc||!button||!cloudBtn||!msg)return;
-    title.textContent="Dados locais encontrados";
-    desc.textContent="Este navegador já possui dados protegidos por uma senha própria, e a conta conectada também possui dados na nuvem.";
-    button.style.display="block";
-    button.textContent="Manter dados deste dispositivo";
-    if(second){second.style.display="none";second.required=false}
-    if(localInput)localInput.placeholder="Senha dos dados deste dispositivo";
-
-    let cloudInput=document.getElementById("cloudUnlockPassword");
-    if(!cloudInput){
-      cloudInput=document.createElement("input");
-      cloudInput.id="cloudUnlockPassword";
-      cloudInput.type="password";
-      cloudInput.autocomplete="off";
-      cloudInput.minLength=6;
-      cloudInput.placeholder="Senha de proteção dos dados da nuvem";
-      cloudInput.style.display="none";
-      cloudInput.style.marginTop="10px";
-      cloudInput.style.width="100%";
-      if(localInput&&localInput.parentNode)localInput.parentNode.insertBefore(cloudInput,msg);
+  return null;
+}
+const $=id=>document.getElementById(id);
+function statusTextSync(text,state='busy'){$('syncMsg').textContent=text;$('syncStatus').textContent=text;$('syncDot').className='sync-dot '+state;}
+function stampRecord(x){x.updatedAt=new Date().toISOString();return x;}
+function refreshSyncUI(){
+  $('syncLogged').style.display=account?'block':'none';
+  $('syncUser').textContent=account?'Conta: '+account.email:'';
+  $('syncRecover').style.display=account?'block':'none';
+  $('syncCredentials').style.display=account?'none':'block';
+}
+function display(state){
+  data=FinanceStore.copy(state.records);view=FinanceStore.copy(data);render();
+  const n=Object.keys(state.pending).length,c=Object.keys(state.conflicts).length;
+  statusTextSync(c?`${c} conflito(s): abra Sincronizar para revisar.`:n?`${n} alteração(ões) salva(s) neste dispositivo; aguardando envio.`:'Dados locais carregados. Verificando nuvem…');
+  const box=$('conflicts');box.replaceChildren();
+  for(const [id,conflict] of Object.entries(state.conflicts)){
+    const pending=state.pending[id];if(!pending)continue;
+    const section=document.createElement('div'),detail=document.createElement('pre');
+    detail.style.cssText='white-space:pre-wrap;max-height:180px;overflow:auto';
+    detail.textContent='Neste dispositivo: '+JSON.stringify(pending.value,null,2)+'\nNa nuvem: '+JSON.stringify(conflict.remote,null,2);
+    section.append(detail);
+    for(const [label,local] of [['Usar minha alteração',true],['Usar versão da nuvem',false]]){
+      const button=document.createElement('button');button.textContent=label;
+      button.onclick=()=>resolveConflict(id,local,pending.opId,conflict.remote).catch(e=>statusTextSync(e.message,'err'));section.append(button);
     }
-
-    cloudBtn.style.display="block";
-    cloudBtn.textContent="☁️ Usar dados da nuvem neste dispositivo";
-    cloudBtn.onclick=function(){
-      const visible=cloudInput.style.display!=="none";
-      if(!visible){
-        cloudInput.style.display="block";
-        msg.style.color="#7a4b00";
-        msg.textContent="Informe a senha de proteção usada pelos dados da nuvem.";
-        cloudInput.focus();
-        return;
-      }
-      useCloudDataOnThisDevice();
+    box.append(section);
+  }
+}
+async function activate(session){
+  const next=session?.user||null;
+  if(account?.id===next?.id)return;
+  const ticket=++epoch;account=next;unlocked=false;
+  retryAt=0;failures=0;
+  data=[];view=[];render();closeEdit();limparForm();$('editForm').reset();
+  $('conflicts').replaceChildren();$('syncRecoverPassword').value='';
+  $('lockScreen').classList.remove('hidden');refreshSyncUI();
+  if(!next){statusTextSync('Entre na sua conta. A fila de cada conta permanece neste dispositivo.','');return;}
+  try{
+    const state=await FinanceStore.read(next.id);
+    if(ticket!==epoch)return;
+    display(state);unlocked=true;$('lockScreen').classList.add('hidden');closeSyncModal();
+    navigator.storage?.persist?.().catch(()=>{});
+    setTimeout(()=>syncNow(),0);
+  }catch(e){statusTextSync('Não foi possível abrir o armazenamento local. '+e.message,'err');}
+}
+function initCloud(){
+  return bootPromise ||= (async()=>{
+    if(!window.SUPABASE_URL||!window.SUPABASE_PUBLISHABLE_KEY||!window.supabase){statusTextSync('Configure um projeto Supabase de testes para iniciar.','err');return false;}
+    __supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY,{
+      auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,storageKey:'finance-auth-v2'}
+    });
+    __supabase.auth.onAuthStateChange((event,session)=>{
+      void activate(usableSession(session));
+      if(event==='TOKEN_REFRESHED')setTimeout(()=>syncNow(),0);
+    });
+    const {data:result,error}=await __supabase.auth.getSession();
+    if(error&&!navigator.onLine){await activate(usableSession(null));return false;}
+    if(error)throw error;
+    await activate(usableSession(result.session));return !!result.session;
+  })().catch(e=>{statusTextSync('Não foi possível iniciar: '+e.message,'err');bootPromise=null;return false;});
+}
+async function openSyncModal(){ $('syncModal').classList.add('show');await initCloud();refreshSyncUI(); }
+function closeSyncModal(){ $('syncModal').classList.remove('show'); }
+async function authenticate(signup){
+  await initCloud();if(!__supabase||account)return;
+  const email=$('syncEmail').value.trim(),password=$('syncPassword').value;
+  if(!email||password.length<6){statusTextSync('Informe e-mail e senha de pelo menos 6 caracteres.','err');return;}
+  try{
+    const {data:result,error}=await __supabase.auth[signup?'signUp':'signInWithPassword']({email,password});
+    if(error)throw error;
+    $('syncPassword').value='';
+    if(result.session)await activate(result.session);
+    else statusTextSync('Verifique seu e-mail para confirmar a conta. Se já possui conta, use Entrar.','');
+  }catch(e){statusTextSync('Não foi possível entrar/criar a conta. Verifique os dados e a conexão.','err');}
+}
+function syncLogin(){return authenticate(false);}
+function syncSignup(){return authenticate(true);}
+async function syncLogout(){
+  if(!__supabase)return;
+  signingOut=true;localStorage.removeItem(LAST_ACCOUNT);
+  await activate(null);
+  try{
+    const {error}=await __supabase.auth.signOut({scope:'local'});
+    if(error)throw error;
+  }catch(e){statusTextSync('Não foi possível encerrar a sessão. Tente novamente antes de compartilhar o dispositivo.','err');}
+  finally{signingOut=false;}
+}
+async function save(){
+  if(!account||!unlocked)throw Error('Entre na conta antes de salvar.');
+  const uid=account.id,ticket=epoch,before=FinanceStore.copy(view),after=FinanceStore.copy(data);
+  try{
+    const state=await FinanceStore.update(uid,s=>FinanceStore.queue(s,before,after));
+    if(ticket===epoch){display(state);void syncNow();}
+  }catch(e){
+    if(ticket===epoch){
+      alert('Alteração não salva. '+e.message);
+      data=FinanceStore.copy(before);view=FinanceStore.copy(before);render();
+      try{display(await FinanceStore.read(uid));}catch(readError){statusTextSync('Armazenamento indisponível. Não feche o formulário antes de copiar os dados.','err');}
+    }
+    throw e;
+  }
+}
+async function syncNow(manual=false){
+  if(!account||!unlocked||!__supabase)return;
+  if(__syncBusy){if(manual)syncRequested=true;return;}
+  if(!manual&&Date.now()<retryAt)return;
+  if(!navigator.onLine){statusTextSync('Offline: alterações preservadas neste dispositivo.');return;}
+  const uid=account.id,ticket=epoch;__syncBusy=true;
+  try{
+    const run=async()=>{
+      const state=await FinanceStore.read(uid);
+      if(ticket!==epoch)return;
+      const sent=Object.values(state.pending).filter(x=>!state.conflicts[x.value.id]).slice(0,1000);
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+      let result;
+      try{result=await __supabase.rpc('finance_sync_v2',{expected_user:uid,operations:sent}).abortSignal(controller.signal);}
+      finally{clearTimeout(timer);}
+      const {data:response,error}=result;
+      if(error)throw error;
+      if(!response||!Array.isArray(response.records)||response.records.some(x=>!FinanceStore.validRecord(x)))throw Error('Resposta da nuvem inválida.');
+      if(ticket!==epoch)return;
+      const next=await FinanceStore.update(uid,s=>FinanceStore.acknowledge(s,sent,response));
+      if(ticket!==epoch)return;
+      display(next);
+      failures=0;retryAt=0;
+      if(!Object.keys(next.pending).length)statusTextSync('Sincronizado com a nuvem.','ok');
     };
-    msg.style.color="#7a4b00";
-    msg.textContent="Nada foi apagado. Escolha se deseja manter os dados locais ou carregar os dados da nuvem.";
-  }
-
-  async function useCloudDataOnThisDevice(){
-    const msg=document.getElementById("lockMsg");
-    const cloudBtn=document.getElementById("lockCloudBtn");
-    const cloudInput=document.getElementById("cloudUnlockPassword");
-    if(!__supabase){
-      if(msg)msg.textContent="Entre na conta de sincronização antes de usar os dados da nuvem.";
-      return;
-    }
-    const p=cloudInput?cloudInput.value:"";
-    if(p.length<6){
-      if(msg){msg.style.color="#991b1b";msg.textContent="Digite a senha de proteção dos dados da nuvem no campo indicado.";}
-      if(cloudInput)cloudInput.focus();
-      return;
-    }
-    if(cloudBtn){cloudBtn.disabled=true;cloudBtn.textContent="☁️ Verificando dados da nuvem..."}
-    if(msg){msg.style.color="#7a4b00";msg.textContent="Baixando e verificando os dados da conta..."}
-    try{
-      const raw=await cloudFetchVault();
-      if(!raw)throw new Error("NO_CLOUD_DATA");
-      const res=await decryptVault(p,raw);
-      if(!res.ok){
-        if(msg){msg.style.color="#991b1b";msg.textContent="A senha de proteção informada não abre os dados da nuvem. Nada foi alterado.";}
-        return;
-      }
-      const localRaw=localStorage.getItem(SECURE_KEY);
-      if(localRaw&&!localStorage.getItem("controle_financeiro_secure_conflict_backup_v1"))localStorage.setItem("controle_financeiro_secure_conflict_backup_v1",localRaw);
-      window.__financePassword=p;
-      data=Array.isArray(res.value)?res.value:[];
-      const newBlob=await encryptData(p,data);
-      localStorage.setItem(SECURE_KEY,JSON.stringify(newBlob));
-      localStorage.removeItem("controle_financeiro_v1");
-      unlocked=true;
-      if(typeof hideLock==="function")hideLock();
-      if(typeof render==="function")render();
-      if(typeof resetInactivity==="function")resetInactivity();
-      if(typeof refreshSyncUI==="function")refreshSyncUI();
-    }catch(e){
-      if(msg){msg.style.color="#991b1b";msg.textContent=e&&e.message==="NO_CLOUD_DATA"?"Não há dados na nuvem para carregar. Nada foi alterado.":"Não foi possível carregar os dados da nuvem agora. Nada foi alterado.";}
-    }finally{
-      if(cloudBtn){cloudBtn.disabled=false;cloudBtn.textContent="☁️ Usar dados da nuvem neste dispositivo"}
-    }
-  }
-
-  window.syncLogin=async function(){
-    await initCloud();
-    const msg=document.getElementById("syncMsg");
-    if(!syncConfigured()){msg.textContent="Configure primeiro o arquivo config.js.";return}
-    const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
-    msg.textContent="";
-    if(!email||!password){msg.textContent="Informe e-mail e senha.";return}
-    setSyncState("busy");
-    const {error}=await __supabase.auth.signInWithPassword({email,password});
-    if(error){setSyncState("err");msg.textContent="Não foi possível entrar. A conta pode não existir ou a senha está incorreta. Se ainda não criou a conta, use “Criar conta”.";return}
-    setSyncState("ok");
-    document.getElementById("syncPassword").value="";
-    if(!unlocked){
-      if(localStorage.getItem(SECURE_KEY)){
-        let cloudHasData=false;
-        try{const {row}=await cloudVaultRow("user_id,updated_at");cloudHasData=!!row}catch(e){}
-        setSecurityMode("unlock");
-        refreshSyncUI();
-        closeSyncModal();
-        if(cloudHasData)showLocalCloudConflict();
-        else msg.textContent="Conta conectada. Este dispositivo já possui dados locais. Desbloqueie-o com a senha de proteção deste navegador para continuar.";
-        return;
-      }
-      const offered=await maybeOfferCloudRestore();
-      if(offered){msg.textContent="Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.";setSecurityMode("restore");}
-      else{setSecurityMode("setup");msg.textContent="Conta conectada. Crie a proteção deste dispositivo para começar com os dados desta conta.";}
-      refreshSyncUI();closeSyncModal();return;
-    }
-    msg.textContent="Conta conectada. Sincronizando...";
-    await syncNow(true);refreshSyncUI();
-  };
-
-  window.syncSignup=async function(){
-    await initCloud();
-    const msg=document.getElementById("syncMsg");
-    if(!syncConfigured()){msg.textContent="Configure primeiro o arquivo config.js.";return}
-    const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
-    msg.textContent="";
-    if(!email||password.length<6){msg.textContent="Informe um e-mail e uma senha com pelo menos 6 caracteres.";return}
-    setSyncState("busy");
-    const {data,error}=await __supabase.auth.signUp({email,password});
-    if(error||accountExistsResponse(data,error)){setSyncState("err");msg.textContent="Esta conta já está cadastrada ou não pôde ser criada. Se você já possui uma conta, use “Entrar”.";return}
-    setSyncState("ok");document.getElementById("syncPassword").value="";
-    if(data.session){msg.textContent="Conta criada. Seus dados locais serão preservados e sincronizados agora.";await syncNow(true);}
-    else msg.textContent="Conta criada. Verifique o e-mail de confirmação. Seus dados locais permanecem neste dispositivo e serão sincronizados depois que você entrar.";
-    refreshSyncUI();
-  };
-})();
+    if(navigator.locks)await navigator.locks.request('finance-sync-'+uid,run);else await run();
+  }catch(e){if(ticket===epoch){
+    retryAt=Date.now()+Math.min(300000,15000*2**Math.min(failures++,5));
+    statusTextSync('Envio pendente. Seus dados locais foram preservados. '+e.message,'err');
+  }}
+  finally{__syncBusy=false;if(syncRequested){syncRequested=false;setTimeout(()=>syncNow(true),0);}}
+}
+async function resolveConflict(id,local,opId,remote){
+  const uid=account?.id,ticket=epoch;if(!uid)return;
+  const state=await FinanceStore.update(uid,s=>{
+    if(s.pending[id]?.opId!==opId||!FinanceStore.equal(s.conflicts[id]?.remote,remote))throw Error('Conflito mudou. Revise novamente.');
+    if(local){s.pending[id].base=remote;s.pending[id].opId=crypto.randomUUID();}
+    else {delete s.pending[id];s.records=s.records.filter(x=>x.id!==id);if(remote)s.records.push(remote);}
+    delete s.conflicts[id];return s;
+  });
+  if(ticket===epoch){display(state);void syncNow();}
+}
+async function importLegacy(source){
+  if(!account||!unlocked)return;
+  const uid=account.id,ticket=epoch,password=$('syncRecoverPassword').value;
+  try{
+    let raw;
+    if(source==='cloud'){
+      const {data:row,error}=await __supabase.from('finance_vault').select('payload').eq('user_id',uid).maybeSingle();
+      if(error)throw error;raw=row?.payload;
+    }else raw=localStorage.getItem(SECURE_KEY)||localStorage.getItem(LEGACY_KEY);
+    if(!raw)throw Error('Nenhum cofre antigo encontrado.');
+    const parsed=typeof raw==='string'?JSON.parse(raw):raw;
+    const records=Array.isArray(parsed)?parsed:await decryptData(password,parsed);
+    if(!Array.isArray(records)||records.some(x=>!FinanceStore.validRecord(x)))throw Error('Formato antigo inválido.');
+    if(ticket!==epoch)return;
+    if(!confirm(`Importar ${records.length} registros para ${account.email}? Confirme que estes dados pertencem a esta conta. O cofre original será preservado.`))return;
+    const state=await FinanceStore.update(uid,s=>{
+      const before=FinanceStore.copy(s.records),map=new Map(before.map(x=>[x.id,x]));
+      for(const x of records){if(map.has(x.id)&&!FinanceStore.equal(map.get(x.id),x))throw Error('Há registros diferentes com o mesmo ID. Resolva a migração antes de importar.');map.set(x.id,x);}
+      return FinanceStore.queue(s,before,[...map.values()]);
+    });
+    if(ticket===epoch){display(state);void syncNow();}
+  }catch(e){if(ticket===epoch)statusTextSync('Importação não concluída: '+e.message,'err');}
+  finally{$('syncRecoverPassword').value='';}
+}
+window.addEventListener('online',()=>syncNow(true));
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncNow(true);});
+setInterval(()=>syncNow(),15000);
+window.addEventListener('DOMContentLoaded',()=>{ $('appVersion').textContent='V1.15 · desenvolvimento';refreshSyncUI();void initCloud(); });

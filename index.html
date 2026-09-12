@@ -85,14 +85,14 @@ form{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}.full{grid-column
 
 
 <script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="vendor/supabase.js"></script>
 <style>
 .sync-btn{background:transparent;color:#fff;border:1px solid #ffffff44;padding:7px 10px;font-size:12px}
 .sync-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#9ca3af;margin-right:5px}
 .sync-dot.ok{background:#22c55e}.sync-dot.err{background:#ef4444}.sync-dot.busy{background:#f59e0b}
 #syncModal{position:fixed;inset:0;background:#0008;z-index:110;display:none;align-items:center;justify-content:center;padding:18px}
 #syncModal.show{display:flex}.sync-box{width:min(440px,100%);background:#fff;border-radius:16px;padding:22px;box-shadow:0 18px 60px #0004}
-.sync-box h3{margin:0 0 8px}.sync-box p{font-size:13px;color:var(--muted);line-height:1.45}
+.sync-box{max-height:90vh;overflow:auto}.sync-box h3{margin:0 0 8px}.sync-box p{font-size:13px;color:var(--muted);line-height:1.45}
 .sync-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.sync-actions button{flex:1;min-width:120px}
 #syncMsg{min-height:20px;font-size:13px;color:#991b1b;margin:8px 0}
 </style>
@@ -119,17 +119,10 @@ th{background:#fbefe5}
 <div id="lockScreen">
   <div class="lock-box">
     <img class="lock-logo" src="logo.png" alt="Logo Sabores do Recôncavo">
-    <div class="security-badge">🔒 Dados protegidos por criptografia</div>
     <h2 id="lockTitle">Meu Controle Financeiro</h2>
-    <p id="lockDescription">Crie uma senha para proteger os dados registrados neste aplicativo.</p>
-    <form id="unlockForm">
-      <input id="unlockPassword" type="password" autocomplete="current-password" placeholder="Senha" minlength="6" required>
-      <input id="unlockPassword2" type="password" autocomplete="new-password" placeholder="Confirme a senha" minlength="6" style="display:none">
-      <div id="lockMsg" class="lock-msg"></div>
-      <button class="primary" style="width:100%;padding:12px" type="submit" id="unlockButton">Criar proteção</button>
-    </form>
-    <button id="lockCloudBtn" type="button" style="width:100%;padding:11px;margin-top:8px;display:none" onclick="openSyncModal()">☁️ Já tenho dados na nuvem — entrar na conta</button>
-    <div class="small" style="margin-top:12px">A senha não é armazenada. Se esquecê-la, os dados criptografados não poderão ser recuperados.</div>
+    <p>Entre ou crie sua conta para começar. Seus lançamentos ficam salvos neste dispositivo e são enviados automaticamente quando há conexão.</p>
+    <button class="primary" onclick="openSyncModal()">Entrar / criar conta</button>
+    <p class="small">Use a proteção de tela do dispositivo. Esta versão não exige uma senha de cofre separada.</p>
   </div>
 </div>
 
@@ -137,14 +130,15 @@ th{background:#fbefe5}
 <div class="sync-box">
 <h3>☁️ Sincronização</h3>
 <p id="syncIntro">Entre com sua conta para usar os mesmos lançamentos no celular e no computador.</p>
-<input id="syncEmail" type="email" placeholder="E-mail" autocomplete="email">
+<div id="syncCredentials"><input id="syncEmail" type="email" placeholder="E-mail" autocomplete="email">
 <input id="syncPassword" type="password" placeholder="Senha da conta" autocomplete="current-password">
-<div id="syncMsg"></div>
+
 <div class="sync-actions">
 <button class="primary" onclick="syncLogin()">Entrar</button>
 <button class="success" onclick="syncSignup()">Criar conta</button>
-<button onclick="closeSyncModal()">Fechar</button>
+
 </div>
+</div><button onclick="closeSyncModal()">Fechar</button><div id="syncMsg"></div><div id="conflicts"></div>
 <div id="syncLogged" style="display:none">
 <hr>
 <div class="small" id="syncUser"></div>
@@ -155,20 +149,19 @@ th{background:#fbefe5}
 </div>
 <div id="syncRecover" style="display:none">
 <hr>
-<div class="small">Os lançamentos que já estão na nuvem foram protegidos com outra senha de proteção. Informe essa senha para uni-los aos deste dispositivo. Nada é apagado.</div>
-<input id="syncRecoverPassword" type="password" placeholder="Senha de proteção anterior" autocomplete="off">
-<div class="sync-actions">
-<button class="primary" onclick="recoverCloudVault()">Unir dados da nuvem</button>
+<div class="small">Importação opcional da versão antiga. Informe a senha antiga somente para abrir um cofre existente. Confirme a conta de destino antes de importar.</div>
+<input id="syncRecoverPassword" type="password" placeholder="Senha do cofre antigo" autocomplete="off">
+<button onclick="importLegacy('cloud')">Importar cofre antigo da conta</button>
+<button onclick="importLegacy('local')">Importar cofre antigo deste dispositivo</button>
 </div>
-</div>
-<div class="small" style="margin-top:12px">A sincronização usa conexão segura e cada conta só acessa os próprios dados. O conteúdo enviado ao servidor permanece criptografado com a senha do aplicativo.</div>
+<div class="small">Os dados locais e da nova nuvem não têm criptografia de cofre. O acesso remoto usa sua conta e conexão segura. Em dispositivos compartilhados, use um perfil separado do navegador.</div>
 </div></div>
-<header><div class="wrap topbar">
+<div id="syncStatus" role="status" style="padding:8px;background:#fff4d6">Entre na conta para iniciar.</div><header><div class="wrap topbar">
   <div class="brand">
     <img src="logo.png" alt="Logo Sabores do Recôncavo">
     <div><h1>Sabores do Recôncavo</h1><div class="subtitle">Meu Controle Financeiro</div></div>
   </div>
-  <div style="display:flex;align-items:center;gap:8px"><span id="appVersion" class="small" style="color:#fff"></span><button class="sync-btn" onclick="openSyncModal()"><span id="syncDot" class="sync-dot"></span>☁️ Sincronizar</button><button class="lock-btn" onclick="lockApp()">🔒 Bloquear</button></div>
+  <div style="display:flex;align-items:center;gap:8px"><span id="appVersion" class="small" style="color:#fff"></span><button class="sync-btn" onclick="openSyncModal()"><span id="syncDot" class="sync-dot"></span>☁️ Sincronizar</button><button class="lock-btn" onclick="syncLogout()">Sair</button></div>
 </div></header>
 <div class="wrap">
 <nav>
@@ -272,8 +265,7 @@ const LEGACY_KEY="controle_financeiro_v1";
 const PREF="controle_financeiro_notificacoes";
 let data=[];
 let unlocked=false;
-let inactivityTimer=null;
-const INACTIVITY_MS=10*60*1000;
+
 
 async function deriveKey(password,salt){
  const material=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),{name:"PBKDF2"},false,["deriveKey"]);
@@ -326,159 +318,12 @@ async function decryptVault(password,raw){
    return {ok:false,reason:e&&e.message==="VAULT_FORMAT"?"format":"password"};
  }
 }
-async function secureSave(){
- if(!unlocked)return;
- const blob=await encryptData(window.__financePassword,data);
- localStorage.setItem(SECURE_KEY,JSON.stringify(blob));
- localStorage.removeItem(LEGACY_KEY);
-}
-let securityMode="setup";
-function setSecurityMode(mode){
- securityMode=mode;
- const p2=document.getElementById("unlockPassword2");
- const title=document.getElementById("lockTitle");
- const desc=document.getElementById("lockDescription");
- const btn=document.getElementById("unlockButton");
- const cloudBtn=document.getElementById("lockCloudBtn");
- if(!p2||!title||!desc||!btn)return;
- const setup=mode==="setup";
- const restore=mode==="restore";
- const ended=mode==="sessionEnded";
- p2.style.display=setup?"block":"none";
- p2.required=setup;
- title.textContent=setup?"Criar proteção":restore?"Restaurar dados da nuvem":ended?"Sessão encerrada":"Aplicativo bloqueado";
- desc.textContent=setup
-   ?"Crie uma senha para proteger os dados financeiros registrados neste aplicativo."
-   :restore
-   ?"Esta conta já possui lançamentos guardados na nuvem. Digite a senha de proteção usada no outro dispositivo para baixá-los."
-   :ended
-   ?"Entre com sua conta de sincronização para acessar os dados desta conta."
-   :"Digite sua senha para acessar seus dados financeiros.";
- btn.textContent=setup?"Criar proteção":restore?"Restaurar dados":ended?"Entrar na conta":"Desbloquear";
- if(cloudBtn){cloudBtn.style.display=(setup||restore||ended||mode==="unlock")?"block":"none";cloudBtn.textContent=ended?"☁️ Entrar na conta":"☁️ Já tenho dados na nuvem — entrar na conta";}
- btn.style.display=ended?"none":"block";
-}
-function showLock(mode="unlock"){
- const screen=document.getElementById("lockScreen");
- screen.classList.remove("hidden");
- document.getElementById("unlockPassword").value="";
- document.getElementById("unlockPassword2").value="";
- document.getElementById("lockMsg").textContent="";
- setSecurityMode(mode);
- setTimeout(()=>document.getElementById("unlockPassword").focus(),50);
-}
-function clearPasswordInputs(){
- ["unlockPassword","unlockPassword2","syncRecoverPassword"].forEach(id=>{
-   const el=document.getElementById(id); if(el)el.value="";
- });
-}
-function hideLock(){clearPasswordInputs();document.getElementById("lockScreen").classList.add("hidden")}
-function resetInactivity(){
- if(!unlocked)return;
- clearTimeout(inactivityTimer);
- inactivityTimer=setTimeout(()=>lockApp(),INACTIVITY_MS);
-}
-function lockApp(){
- if(!unlocked)return;
- window.__financePassword=null; unlocked=false; clearTimeout(inactivityTimer); showLock("unlock");
-}
-["click","touchstart","keydown"].forEach(ev=>document.addEventListener(ev,resetInactivity,{passive:true}));
-
-let localLegacyData=[];
-async function initializeSecurity(){
- const stored=localStorage.getItem(SECURE_KEY);
- let legacyData=[];
- try{const legacy=localStorage.getItem(LEGACY_KEY); legacyData=legacy?JSON.parse(legacy):[]}catch(e){legacyData=[]}
- localLegacyData=Array.isArray(legacyData)?legacyData:[];
- const form=document.getElementById("unlockForm");
- const password=document.getElementById("unlockPassword");
- const password2=document.getElementById("unlockPassword2");
- const msg=document.getElementById("lockMsg");
- form.onsubmit=async e=>{
-   e.preventDefault();
-   msg.textContent="";
-   const p=password.value;
-   if(p.length<6){msg.textContent="Use uma senha com pelo menos 6 caracteres.";return}
-
-   /* Dispositivo novo com cofre na nuvem: a senha informada precisa abrir o
-      conteudo que ja existe na conta. Nunca criamos uma protecao paralela. */
-   if(securityMode==="restore"){
-     msg.textContent="Baixando dados da conta...";
-     let raw=null;
-     try{raw=await cloudFetchVault()}
-     catch(err){msg.textContent="Não foi possível baixar os dados da conta agora. Verifique a conexão e tente de novo.";return}
-     if(!raw){
-       setSecurityMode(localStorage.getItem(SECURE_KEY)?"unlock":"setup");
-       msg.textContent="Nenhum dado encontrado na nuvem para esta conta.";
-       return;
-     }
-     const res=await decryptVault(p,raw);
-     if(!res.ok){
-       msg.textContent=res.reason==="format"
-         ?"Os dados guardados na nuvem estão em um formato que esta versão não reconhece. Nada foi alterado."
-         :"Senha de proteção incorreta para os dados desta conta.";
-       password.value="";password.focus();
-       return;
-     }
-     /* Qualquer lancamento antigo nao criptografado deste navegador e
-        preservado: entra na uniao em vez de ser descartado. */
-     const local=localLegacyData;
-     data=(local.length&&typeof mergeRecords==="function")?mergeRecords(res.value,local):res.value;
-     window.__financePassword=p;
-     unlocked=true;
-     try{await secureSave()}catch(err){}
-     hideLock();render();resetInactivity();
-     if(__syncReady) syncNow(false);
-     return;
-   }
-
-   if(securityMode==="setup"){
-     const p2=password2.value;
-     if(p!==p2){msg.textContent="As senhas não coincidem.";return}
-     window.__financePassword=p;
-     data=localLegacyData;
-     try{
-       unlocked=true;
-       await secureSave();
-       hideLock();render();resetInactivity();
-       if(__syncReady) syncNow(false);
-     }catch(err){
-       window.__financePassword=null;unlocked=false;
-       msg.textContent="Não foi possível proteger os dados neste navegador.";
-     }
-     return;
-   }
-
-   const raw=localStorage.getItem(SECURE_KEY);
-   if(!raw){setSecurityMode("setup");msg.textContent="Crie a proteção deste dispositivo para começar.";return}
-   const res=await decryptVault(p,raw);
-   if(!res.ok){
-     msg.textContent=res.reason==="format"
-       ?"Os dados protegidos deste navegador estão inválidos ou incompletos."
-       :"Senha incorreta.";
-     password.value="";password.focus();
-     return;
-   }
-   data=res.value;
-   window.__financePassword=p;unlocked=true;hideLock();render();resetInactivity();
-   if(__syncReady) syncNow(false);
- };
- if(stored){showLock("unlock");}
- else{showLock("setup");}
-}
-
 const cats={entrada:["Vendas","Eventos","Salário","Transferência recebida","Outros"],saida:["Ingredientes","Bebidas","Embalagens","Energia","Água","Internet","Aluguel","Funcionários","Transporte","Manutenção","Marketing","Impostos","Compras","Transferência/Retirada","Outros"]};
 
 const brl=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
 /* Datas de calendário devem usar a data local do dispositivo. toISOString()
    usa UTC e, no Brasil, pode virar o dia seguinte depois das 21h. */
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`};
-async function save(){
-  await secureSave();
-  if(__syncReady && unlocked && navigator.onLine && !__syncBusy){
-    syncNow(false);
-  }
-}
 function fmtDate(s){return s?new Date(s+"T12:00:00").toLocaleDateString("pt-BR"):"—"}
 function daysUntil(s){return Math.ceil((new Date(s+"T12:00:00")-new Date(today()+"T12:00:00"))/86400000)}
 function statusClass(x){return x==="pago"?"paid":daysUntil(x.vencimento)<0?"overdue":"pending"}
@@ -507,7 +352,8 @@ function limparForm(){document.getElementById("form").reset();document.getElemen
    ({id,deleted:true,deletedAt}) para que a exclusao se propague entre os
    dispositivos em vez de reaparecer na sincronizacao seguinte. Toda leitura
    passa por activeData(). */
-function activeData(){return data.filter(x=>x&&!x.deleted)}
+function escapeHTML(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function activeData(){return data.filter(x=>x&&!x.deleted&&/^[A-Za-z0-9_-]{1,100}$/.test(x.id))}
 function filtered(){return activeData().filter(x=>(!fControle.value||x.controle===fControle.value)&&(!fTipo.value||x.tipo===fTipo.value)&&(!fStatus.value||x.status===fStatus.value)&&(!fMes.value||x.data.startsWith(fMes.value))).sort((a,b)=>b.data.localeCompare(a.data))}
 [fControle,fTipo,fStatus,fMes].forEach(x=>x.onchange=render);
 
@@ -562,22 +408,24 @@ function render(){
  let overdue=activeData().filter(x=>x.status==="pendente"&&x.vencimento&&daysUntil(x.vencimento)<0).sort((a,b)=>b.vencimento.localeCompare(a.vencimento));
  homeDue.innerHTML=due.length?due.map(dueRow).join(""):'<div class="empty">Nenhuma conta vencendo nos próximos 7 dias.</div>';
  homeOverdue.innerHTML=overdue.length?overdue.map(dueRow).join(""):'<div class="empty">Nenhuma conta vencida.</div>';
- tbody.innerHTML=filtered().map(x=>`<tr><td>${fmtDate(x.data)}</td><td>${x.descricao}</td><td>${x.tipo==="entrada"?"Entrada":"Saída"}</td><td>${x.controle==="pessoal"?"Pessoal":"Restaurante"}</td><td>${x.categoria}</td><td class="${x.tipo==="entrada"?"green":"red"}">${x.tipo==="entrada"?"+":"-"} ${brl(x.valor)}</td><td><span class="status ${statusClass(x)}">${statusText(x)}</span></td><td class="actions"><button class="btn-edit" onclick="editItem('${x.id}')">✏️ Editar</button>${x.status==="pendente"?`<button class="btn-pay" onclick="pay('${x.id}')">${x.tipo==="entrada"?"Recebido":"Pago"}</button>`:""}<button class="btn-delete" onclick="delItem('${x.id}')">🗑️</button></td></tr>`).join("")||`<tr><td colspan="8" class="empty">Nenhuma movimentação encontrada.</td></tr>`;
+ tbody.innerHTML=filtered().map(x=>`<tr><td>${fmtDate(x.data)}</td><td>${escapeHTML(x.descricao)}</td><td>${x.tipo==="entrada"?"Entrada":"Saída"}</td><td>${x.controle==="pessoal"?"Pessoal":"Restaurante"}</td><td>${escapeHTML(x.categoria)}</td><td class="${x.tipo==="entrada"?"green":"red"}">${x.tipo==="entrada"?"+":"-"} ${brl(x.valor)}</td><td><span class="status ${statusClass(x)}">${statusText(x)}</span></td><td class="actions"><button class="btn-edit" onclick="editItem('${x.id}')">✏️ Editar</button>${x.status==="pendente"?`<button class="btn-pay" onclick="pay('${x.id}')">${x.tipo==="entrada"?"Recebido":"Pago"}</button>`:""}<button class="btn-delete" onclick="delItem('${x.id}')">🗑️</button></td></tr>`).join("")||`<tr><td colspan="8" class="empty">Nenhuma movimentação encontrada.</td></tr>`;
  let reportMonthEl=document.getElementById("reportMonth");
  if(reportMonthEl && !reportMonthEl.value)reportMonthEl.value=month;
  let reportPeriod=reportMonthEl?.value||month;
  let m=activeData().filter(x=>x.data.startsWith(reportPeriod)), en=m.filter(x=>x.tipo==="entrada").reduce((s,x)=>s+x.valor,0), sa=m.filter(x=>x.tipo==="saida").reduce((s,x)=>s+x.valor,0);
  let pendingPeriod=m.filter(x=>x.status==="pendente").reduce((s,x)=>s+x.valor,0);
  reportCards.innerHTML=[["Entradas",en,"green"],["Saídas",sa,"red"],["Resultado",en-sa,en-sa>=0?"green":"red"],["Contas pendentes",pendingPeriod,"orange"]].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${brl(x[1])}</div></div>`).join("");
- let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${k}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no período selecionado.</td></tr>';
+ let map={};m.forEach(x=>{map[x.categoria]??={e:0,s:0};map[x.categoria][x.tipo==="entrada"?"e":"s"]+=x.valor});catBody.innerHTML=Object.entries(map).map(([k,v])=>`<tr><td>${escapeHTML(k)}</td><td class="green">${brl(v.e)}</td><td class="red">${brl(v.s)}</td></tr>`).join("")||'<tr><td colspan="3" class="empty">Sem dados no período selecionado.</td></tr>';
  if(reportMonthEl)reportMonthEl.onchange=render;
- dueList.innerHTML=(activeData().filter(x=>x.status==="pendente"&&x.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))).map(d=>`<div class="card" style="margin-bottom:8px"><div class="actions"><strong>${d.descricao}</strong><span class="status ${statusClass(d)}">${statusText(d)}</span><span style="margin-left:auto">${brl(d.valor)}</span></div><div class="label">Vencimento: ${fmtDate(d.vencimento)} · ${d.controle} · ${d.categoria}</div><div class="actions" style="margin-top:8px"><button class="success" onclick="pay('${d.id}')">☑ Marcar como pago</button></div></div>`).join("")||'<div class="empty">Nenhum vencimento pendente.</div>';
+ dueList.innerHTML=(activeData().filter(x=>x.status==="pendente"&&x.vencimento).sort((a,b)=>a.vencimento.localeCompare(b.vencimento))).map(d=>`<div class="card" style="margin-bottom:8px"><div class="actions"><strong>${escapeHTML(d.descricao)}</strong><span class="status ${statusClass(d)}">${statusText(d)}</span><span style="margin-left:auto">${brl(d.valor)}</span></div><div class="label">Vencimento: ${fmtDate(d.vencimento)} · ${escapeHTML(d.controle)} · ${escapeHTML(d.categoria)}</div><div class="actions" style="margin-top:8px"><button class="success" onclick="pay('${d.id}')">☑ Marcar como pago</button></div></div>`).join("")||'<div class="empty">Nenhum vencimento pendente.</div>';
  loadPrefs();
 }
-function dueRow(d){let n=daysUntil(d.vencimento);let txt=n<0?`vencida há ${Math.abs(n)} dia(s)`:n===0?"vence hoje":`vence em ${n} dia(s)`;return `<div style="padding:9px 0;border-bottom:1px solid var(--line)"><strong>${d.descricao}</strong> — ${brl(d.valor)} · ${fmtDate(d.vencimento)} <span class="label">(${txt})</span></div>`}
+function dueRow(d){let n=daysUntil(d.vencimento);let txt=n<0?`vencida há ${Math.abs(n)} dia(s)`:n===0?"vence hoje":`vence em ${n} dia(s)`;return `<div style="padding:9px 0;border-bottom:1px solid var(--line)"><strong>${escapeHTML(d.descricao)}</strong> — ${brl(d.valor)} · ${fmtDate(d.vencimento)} <span class="label">(${txt})</span></div>`}
 async function pay(id){let x=activeData().find(x=>x.id===id);if(x){x.status="pago";stampRecord(x);await save();render()}}
+let editBase=null;
 function editItem(id){
  let x=activeData().find(y=>y.id===id); if(!x)return;
+ editBase=JSON.stringify(x);
  document.getElementById("editId").value=x.id;
  document.getElementById("eTipo").value=x.tipo;
  document.getElementById("eControle").value=x.controle;
@@ -616,354 +464,15 @@ function loadPrefs(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3"
 document.getElementById("editForm").onsubmit=async e=>{
  e.preventDefault();
  let x=activeData().find(y=>y.id===document.getElementById("editId").value); if(!x)return;
+ if(JSON.stringify(x)!==editBase){alert('Este lançamento mudou desde a abertura. Reabra a edição para revisar.');return;}
  x.tipo=eTipo.value;x.controle=eControle.value;x.descricao=eDescricao.value;x.categoria=eCategoria.value;
  x.valor=Number(eValor.value);x.data=eData.value;x.vencimento=eVencimento.value||eData.value;x.forma=eForma.value;x.status=eStatus.value;
  stampRecord(x);
  await save();closeEdit();render();alert("Alterações salvas com sucesso.");
 };
-function notifications(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3":true,"1":true,"0":true,"over":true}'), msgs=[];activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{let n=daysUntil(x.vencimento);if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over))msgs.push(`${x.descricao}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`)});if(msgs.length&&"Notification"in window&&Notification.permission==="granted")new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\n")});}
-if("Notification"in window&&Notification.permission==="default")Notification.requestPermission().catch(()=>{});
-initializeSecurity().then(()=>{const v=document.getElementById("appVersion"); if(v)v.textContent="V1.13";});
+function notifications(){let p=JSON.parse(localStorage.getItem(PREF)||'{"7":true,"3":true,"1":true,"0":true,"over":true}'), msgs=[];activeData().filter(x=>x.status==="pendente"&&x.vencimento).forEach(x=>{let n=daysUntil(x.vencimento);if((n===7&&p["7"])||(n===3&&p["3"])||(n===1&&p["1"])||(n===0&&p["0"])||(n<0&&p.over))msgs.push(`${escapeHTML(x.descricao)}: ${n<0?"vencida":n===0?"vence hoje":`vence em ${n} dias`} — ${brl(x.valor)}`)});if(msgs.length&&"Notification"in window&&Notification.permission==="granted")new Notification("Meu Controle Financeiro",{body:msgs.slice(0,3).join("\n")});}
 </script>
 <script>
-
-/* Cloud synchronization — V1.11 */
-let __supabase=null;
-let __syncReady=false;
-let __syncBusy=false;
-let __cloudMismatch=false;
- 
-const AUTO_SYNC_INTERVAL_MS=5*60*1000;
-let __lastSyncAt=0;
-
-function syncConfigured(){
- return !!(window.SUPABASE_URL && window.SUPABASE_PUBLISHABLE_KEY &&
-   !window.SUPABASE_URL.includes("COLOQUE") && !window.SUPABASE_PUBLISHABLE_KEY.includes("COLOQUE"));
-}
-function setSyncState(state){
- const d=document.getElementById("syncDot"); if(!d)return;
- d.className="sync-dot "+(state||"");
-}
-
- function autoSync(){
- if(!__syncReady || !unlocked || !navigator.onLine || __syncBusy)return;
-
- const now=Date.now();
- if(__lastSyncAt && now-__lastSyncAt<AUTO_SYNC_INTERVAL_MS)return;
-
- __lastSyncAt=now;
- syncNow(false);
-}
- 
-async function openSyncModal(){
- await initCloud();
- document.getElementById("syncModal").classList.add("show");
- const msg=document.getElementById("syncMsg");
- msg.textContent=syncConfigured()?"":"A sincronização ainda precisa ser configurada no arquivo config.js.";
- refreshSyncUI();
-}
-function closeSyncModal(){document.getElementById("syncModal").classList.remove("show")}
-function setRecoverVisible(v){
- const el=document.getElementById("syncRecover");
- if(el)el.style.display=v?"block":"none";
-}
-function syncErrorText(e){
- const m=e&&e.message?String(e.message):"";
- return m||"Verifique a configuração e a conexão.";
-}
-function refreshSyncUI(){
- const logged=document.getElementById("syncLogged");
- if(!__supabase){logged.style.display="none";return}
- __supabase.auth.getUser().then(({data:res})=>{
-   const user=res&&res.user;
-   setRecoverVisible(!!user&&unlocked&&__cloudMismatch);
-   if(user){
-     logged.style.display="block";
-     document.getElementById("syncUser").textContent="Conta conectada: "+user.email;
-     document.getElementById("syncIntro").textContent="Sua conta está conectada. Os lançamentos podem ser sincronizados entre seus dispositivos.";
-   }else{
-     logged.style.display="none";
-     document.getElementById("syncIntro").textContent="Entre com sua conta para usar os mesmos lançamentos no celular e no computador.";
-   }
- })
-}
-
-/* Leitura do cofre da conta atual. Nao escreve nada. */
-async function cloudVaultRow(columns){
- const {data:res,error:userErr}=await __supabase.auth.getUser();
- const user=res&&res.user;
- if(userErr||!user)throw new Error("Sessão inválida");
- const {data:row,error}=await __supabase.from("finance_vault").select(columns||"payload,updated_at").eq("user_id",user.id).maybeSingle();
- if(error)throw error;
- return {user:user,row:row||null};
-}
-async function cloudFetchVault(){
- if(!__supabase||!__syncReady)throw new Error("Sem sessão");
- const {row}=await cloudVaultRow("payload");
- return row?row.payload:null;
-}
-/* A conta ja tem cofre mas este navegador ainda nao: a tela de bloqueio pede
-   a senha de protecao existente em vez de oferecer "Criar proteção". */
-async function maybeOfferCloudRestore(){
- if(unlocked)return false;
- if(localStorage.getItem(SECURE_KEY))return false;
- if(!__supabase||!__syncReady)return false;
- try{
-   const {row}=await cloudVaultRow("user_id,updated_at");
-   if(!row)return false;
-   setSecurityMode("restore");
-   return true;
- }catch(e){return false}
-}
-/* Une o conteudo remoto ja descriptografado ao local e regrava o cofre
-   sempre com a senha de protecao ativa neste dispositivo. */
-async function pushMerged(user,remoteValue){
- const merged=mergeRecords(Array.isArray(data)?data:[],Array.isArray(remoteValue)?remoteValue:[]);
- data=merged;
- const payload=await encryptData(window.__financePassword,data);
- const {error}=await __supabase.from("finance_vault").upsert({user_id:user.id,payload},{onConflict:"user_id"});
- if(error)throw error;
- await secureSave();
- render();
-}
-async function initCloud(){
- if(__supabase) return __syncReady;
- if(!syncConfigured()){setSyncState("err");return false}
- try{
-   __supabase=window.supabase.createClient(window.SUPABASE_URL,window.SUPABASE_PUBLISHABLE_KEY,{
-     auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true}
-   });
-   const {data:{session}}=await __supabase.auth.getSession();
-   __syncReady=!!session;
-   setSyncState(session?"ok":"");
-   __supabase.auth.onAuthStateChange((_event,newSession)=>{
-     __syncReady=!!newSession;setSyncState(newSession?"ok":"");
-     if(!newSession){__cloudMismatch=false;setRecoverVisible(false)}
-     refreshSyncUI();
-     if(!newSession)return;
-     if(unlocked)syncNow(false);
-   });
-   refreshSyncUI();
-   if(session && unlocked){
-     await syncNow(false);
-   }
-   return __syncReady;
- }catch(e){console.warn("Falha ao iniciar sincronização",e);setSyncState("err");return false}
-}
-async function syncLogin(){
- await initCloud();
- if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
- const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
- const msg=document.getElementById("syncMsg");msg.textContent="";
- if(!email||!password){msg.textContent="Informe e-mail e senha.";return}
- setSyncState("busy");
- const {error}=await __supabase.auth.signInWithPassword({email,password});
- if(error){setSyncState("err");msg.textContent="Não foi possível entrar. Verifique os dados da conta.";return}
- setSyncState("ok");
- document.getElementById("syncPassword").value="";
-if(!unlocked){
-   /* Se este dispositivo já possui um cofre protegido, o login da conta
-      nao deve criar uma nova protecao nem substituir os dados locais.
-      Apenas mantemos a tela de desbloqueio. */
-   if(localStorage.getItem(SECURE_KEY)){
-     setSecurityMode("unlock");
-     msg.textContent="Conta conectada. Desbloqueie o aplicativo com sua senha de proteção para continuar.";
-     refreshSyncUI();
-     closeSyncModal();
-     return;
-   }
-
-   const offered=await maybeOfferCloudRestore();
-   if(offered){
-     msg.textContent="Conta conectada. Informe a senha de proteção na tela inicial para baixar os lançamentos.";
-     setSecurityMode("restore");
-   }else{
-     setSecurityMode("setup");
-     msg.textContent="Conta conectada. Crie a proteção deste dispositivo para começar com os dados desta conta.";
-   }
-   refreshSyncUI();
-   closeSyncModal();
-   return;
-}
- msg.textContent="Conta conectada. Sincronizando...";
- await syncNow(true);refreshSyncUI();
-}
-async function syncSignup(){
- await initCloud();
- if(!syncConfigured()){document.getElementById("syncMsg").textContent="Configure primeiro o arquivo config.js.";return}
- const email=document.getElementById("syncEmail").value.trim(),password=document.getElementById("syncPassword").value;
- const msg=document.getElementById("syncMsg");msg.textContent="";
- if(!email||password.length<6){msg.textContent="Informe um e-mail e uma senha com pelo menos 6 caracteres.";return}
- setSyncState("busy");
- const {data,error}=await __supabase.auth.signUp({email,password});
- if(error){setSyncState("err");msg.textContent="Não foi possível criar a conta. Verifique os dados.";return}
- setSyncState("ok");
- document.getElementById("syncPassword").value="";
- msg.textContent=data.session?"Conta criada. Sincronizando...":"Conta criada. Verifique o e-mail de confirmação e depois entre no aplicativo.";
- if(data.session){
-   if(unlocked) await syncNow(true);
-   else await maybeOfferCloudRestore();
- }
- refreshSyncUI();
-}
-async function syncLogout(){
- if(!__supabase)return;
- if(unlocked){
-   await syncNow(false);
-   if(__cloudMismatch){
-     const m=document.getElementById("syncMsg");
-     if(m)m.textContent="A conta possui dados protegidos com outra senha. Recupere-os antes de sair para nao perder alteracoes locais.";
-     return;
-   }
- }
- await __supabase.auth.signOut();
- __syncReady=false;__cloudMismatch=false;setRecoverVisible(false);setSyncState("");
- localStorage.removeItem(SECURE_KEY);
- localStorage.removeItem(LEGACY_KEY);
- data=[];
- window.__financePassword=null;
- unlocked=false;
- clearTimeout(inactivityTimer);
- closeSyncModal();
- showLock("sessionEnded");
- refreshSyncUI();
-}
-async function syncNow(manual=false){
- const msg=document.getElementById("syncMsg");
- if(!syncConfigured()){if(manual&&msg)msg.textContent="A sincronização ainda precisa ser configurada no arquivo config.js.";return}
- if(!__supabase||!__syncReady){if(manual&&msg)msg.textContent="Entre na sua conta para sincronizar.";return}
- if(!unlocked){if(manual&&msg)msg.textContent="Desbloqueie o aplicativo com a senha de proteção antes de sincronizar.";return}
- if(__syncBusy)return;
- __syncBusy=true;setSyncState("busy");
- try{
-   const {user,row}=await cloudVaultRow("payload,updated_at");
-   /* Primeiro dispositivo da conta: envia o que ja existe aqui. */
-   if(!row){
-     const payload=await encryptData(window.__financePassword,data);
-     const {error}=await __supabase.from("finance_vault").insert({user_id:user.id,payload});
-     if(error)throw error;
-     __cloudMismatch=false;setRecoverVisible(false);setSyncState("ok");
-     if(manual&&msg){msg.textContent="Sincronização concluída.";refreshSyncUI()}
-     return;
-   }
-   const res=await decryptVault(window.__financePassword,row.payload);
-   if(!res.ok){
-     /* Sem sobrescrever nem apagar: o cofre remoto fica intacto e o usuario
-        recebe o caminho de recuperacao com a senha de protecao anterior. */
-     __cloudMismatch=true;setRecoverVisible(true);setSyncState("err");
-     if(msg){
-       msg.textContent=res.reason==="format"
-         ?"Os dados guardados na nuvem estão em um formato que esta versão não reconhece. Nada foi apagado nem sobrescrito."
-         :"Os lançamentos já guardados na nuvem foram protegidos com outra senha de proteção. Informe abaixo a senha anterior para uni-los — nada será apagado.";
-     }
-     refreshSyncUI();
-     return;
-   }
-   __cloudMismatch=false;setRecoverVisible(false);
-   await pushMerged(user,res.value);
-   setSyncState("ok");
-   if(manual&&msg){msg.textContent="Sincronização concluída.";refreshSyncUI()}
- }catch(e){
-   setSyncState("err");
-   if(manual&&msg)msg.textContent="Não foi possível sincronizar. "+syncErrorText(e);
- }finally{__syncBusy=false}
-}
-/* Recuperacao nao destrutiva: so grava depois de descriptografar com exito o
-   cofre remoto usando a senha de protecao anterior informada pelo usuario. */
-async function recoverCloudVault(){
- const input=document.getElementById("syncRecoverPassword");
- const msg=document.getElementById("syncMsg");
- if(!__supabase||!__syncReady){msg.textContent="Entre na sua conta primeiro.";return}
- if(!unlocked){msg.textContent="Desbloqueie o aplicativo antes de unir os dados.";return}
- const previous=input?input.value:"";
- if(!previous){msg.textContent="Informe a senha de proteção usada anteriormente.";return}
- if(__syncBusy)return;
- __syncBusy=true;setSyncState("busy");msg.textContent="Verificando a senha informada...";
- try{
-   const {user,row}=await cloudVaultRow("payload");
-   if(!row){
-     __cloudMismatch=false;setRecoverVisible(false);setSyncState("ok");
-     msg.textContent="Não há dados na nuvem para unir.";
-     return;
-   }
-   const res=await decryptVault(previous,row.payload);
-   if(!res.ok){
-     setSyncState("err");
-     msg.textContent=res.reason==="format"
-       ?"Os dados da nuvem estão em um formato não reconhecido. Nada foi alterado."
-       :"A senha informada não abre os dados guardados na nuvem. Nada foi alterado.";
-     return;
-   }
-   await pushMerged(user,res.value);
-   __cloudMismatch=false;setRecoverVisible(false);setSyncState("ok");
-   msg.textContent="Dados da nuvem unidos e reprotegidos com a senha de proteção atual deste dispositivo.";
- }catch(e){
-   setSyncState("err");
-   msg.textContent="Não foi possível unir os dados agora. "+syncErrorText(e);
- }finally{
-   if(input)input.value="";
-   __syncBusy=false;refreshSyncUI();
- }
-}
-const TOMBSTONE_TTL_MS=180*24*60*60*1000;
-function stampRecord(x){if(x&&typeof x==="object")x.updatedAt=new Date().toISOString();return x}
-function recordTime(x){
- if(!x)return 0;
- const t=Date.parse((x.deleted?x.deletedAt:x.updatedAt)||"");
- return isNaN(t)?0:t;
-}
-function mergeRecords(a,b){
- /* Marcas de exclusao antigas sao descartadas antes da uniao para que o
-    conjunto nao cresca sem limite. */
- const limit=Date.now()-TOMBSTONE_TTL_MS;
- const vigente=x=>{
-   if(!x||!x.id)return false;
-   if(!x.deleted)return true;
-   const t=Date.parse(x.deletedAt||"");
-   return isNaN(t)?true:t>=limit;
- };
- const map=new Map();
- const removed=new Map();
- [...b,...a].filter(vigente).forEach(x=>{
-   if(x.deleted){
-     removed.set(x.id,{id:x.id,deleted:true,deletedAt:x.deletedAt||new Date().toISOString()});
-     return;
-   }
-   /* Entre duas versoes do mesmo lancamento vence a alteracao mais recente;
-      sem data de alteracao (dados antigos) fica a versao deste dispositivo. */
-   const cur=map.get(x.id);
-   if(!cur||recordTime(x)>=recordTime(cur))map.set(x.id,x);
- });
- /* Uma exclusao vigente sempre vence o registro vivo. */
- removed.forEach((v,k)=>map.set(k,v));
- return Array.from(map.values());
-}
-window.addEventListener("online",()=>{if(unlocked)syncNow(false)});
-
- // Verificação periódica da sincronização automática.
-// O intervalo de verificação é de 1 minuto, mas autoSync()
-// só permite uma sincronização efetiva a cada 5 minutos.
-setInterval(autoSync, 60 * 1000);
-
-// Ao retornar ao aplicativo, verifica imediatamente se já é
-// necessário sincronizar.
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    autoSync();
-  }
-});
-
-// Inicializa o cliente de sincronização no carregamento, sem abrir a interface.
-// Assim, uma sessão já existente fica disponível para a sincronização automática.
-// Se houver uma conta conectada e este dispositivo ainda não tiver cofre local,
-// oferece a restauração sem substituir nem apagar dados locais.
-setTimeout(async () => {
-  const ready = await initCloud();
-  if (ready && !unlocked && !localStorage.getItem(SECURE_KEY)) {
-    const offered = await maybeOfferCloudRestore();
-    if (offered) showLock("restore");
-  }
-}, 0);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
@@ -1001,10 +510,13 @@ async function applyUpdate(){
   else location.reload();
 }
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.addEventListener("controllerchange", () => location.reload());
+  const hadController=!!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {if(hadController)location.reload();});
 }
 
 </script>
+ <script src="sync-store.js"></script>
+ <script src="auth.js"></script>
  <script src="about.js"></script>
 </body>
 </html>

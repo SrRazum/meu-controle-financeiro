@@ -12,11 +12,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-v113-production
+  group: pages-v113-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/v1.13-producao'
     runs-on: ubuntu-latest
     steps:
       - name: Baixar codigo da V1.13
@@ -31,6 +32,7 @@ jobs:
           path: .
 
   deploy:
+    if: github.ref == 'refs/heads/v1.13-producao'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
