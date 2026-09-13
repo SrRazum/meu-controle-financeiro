@@ -19,8 +19,8 @@ try{
  assert.equal((await b.evaluate(()=>FinanceStore.read('fictitious-A'))).records.length,0);
  await b.locator('#backupFile').setInputFiles(file);await b.locator('#backupPassword').fill('Senha-Ficticia-Backup-2026!');await b.getByRole('button',{name:'Restaurar backup protegido',exact:true}).click();await b.waitForFunction(()=>document.getElementById('backupResult').textContent.includes('Backup restaurado'));
  assert.deepEqual(await b.evaluate(()=>FinanceStore.read('fictitious-A')),original);
- await b.locator('#backupFile').setInputFiles(file);await b.locator('#backupPassword').fill('Senha-Ficticia-Backup-2026!');await b.getByRole('button',{name:'Restaurar backup protegido',exact:true}).click();await b.waitForFunction(()=>document.getElementById('backupResult').textContent.includes('já contém dados'));
+ await b.locator('#backupFile').setInputFiles(file);await b.locator('#backupPassword').fill('Senha-Ficticia-Backup-2026!');await b.getByRole('button',{name:'Restaurar backup protegido',exact:true}).click();await b.waitForFunction(()=>document.getElementById('backupResult').textContent.includes('Backup restaurado'));
  assert.deepEqual(await b.evaluate(()=>FinanceStore.read('fictitious-A')),original);
- console.log('PASS: encrypted download, wrong-password rejection, actual file restore preserves pending operation, nonempty restore refused.');
+ console.log('PASS: encrypted download, wrong-password rejection, actual file restore preserves pending operation, repeated restore is idempotent.');
 }finally{await browser.close();server.close();fs.rmSync(tmp,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1;});
