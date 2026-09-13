@@ -1,7 +1,7 @@
 /* Local preview only: no repository metadata, tests, or secrets are served. */
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..');
-const allowed=new Set(['index.html','logo.png','manifest.json','config.js','auth.js','about.js','sync-store.js','sw.js','vendor/supabase.js']);
+const allowed=new Set(['index.html','logo.png','manifest.json','config.js','auth.js','about.js','sync-store.js','backup.js','sw.js','vendor/supabase.js']);
 const types={'.html':'text/html; charset=utf-8','.js':'application/javascript; charset=utf-8','.png':'image/png','.json':'application/json'};
 const port=Number(process.env.PORT||4173);
 http.createServer((req,res)=>{

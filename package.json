@@ -4,7 +4,8 @@
     "dev": "node scripts/preview.cjs",
     "test": "node --test tests/*.test.cjs",
     "test:browser": "node tests/browser.cjs",
-    "test:backup": "node tests/backup.cjs"
+    "test:backup": "node tests/backup.cjs",
+    "test:backup-ui": "node tests/backup-ui.cjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",
