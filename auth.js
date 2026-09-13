@@ -49,7 +49,7 @@ async function activate(session){
   const ticket=++epoch;account=next;unlocked=false;
   retryAt=0;failures=0;
   data=[];view=[];render();closeEdit();limparForm();$('editForm').reset();
-  $('conflicts').replaceChildren();$('syncRecoverPassword').value='';
+  $('conflicts').replaceChildren();$('syncRecoverPassword').value='';$('syncRecoverResult').textContent='';
   $('lockScreen').classList.remove('hidden');refreshSyncUI();
   if(!next){statusTextSync('Entre na sua conta. A fila de cada conta permanece neste dispositivo.','');return;}
   try{
@@ -172,6 +172,7 @@ async function resolveConflict(id,local,opId,remote){
 async function importLegacy(source){
   if(!account||!unlocked)return;
   const uid=account.id,ticket=epoch,password=$('syncRecoverPassword').value;
+  $('syncRecoverResult').textContent='Verificando cofre antigo…';
   try{
     let raw;
     if(source==='cloud'){
@@ -183,18 +184,18 @@ async function importLegacy(source){
     const records=Array.isArray(parsed)?parsed:await decryptData(password,parsed);
     if(!Array.isArray(records)||records.some(x=>!FinanceStore.validRecord(x)))throw Error('Formato antigo inválido.');
     if(ticket!==epoch)return;
-    if(!confirm(`Importar ${records.length} registros para ${account.email}? Confirme que estes dados pertencem a esta conta. O cofre original será preservado.`))return;
+    if(!confirm(`Importar ${records.length} registros para ${account.email}? Confirme que estes dados pertencem a esta conta. O cofre original será preservado.`)){if(ticket===epoch)$('syncRecoverResult').textContent='Importação cancelada.';return;}
     const state=await FinanceStore.update(uid,s=>{
       const before=FinanceStore.copy(s.records),map=new Map(before.map(x=>[x.id,x]));
       for(const x of records){if(map.has(x.id)&&!FinanceStore.equal(map.get(x.id),x))throw Error('Há registros diferentes com o mesmo ID. Resolva a migração antes de importar.');map.set(x.id,x);}
       return FinanceStore.queue(s,before,[...map.values()]);
     });
-    if(ticket===epoch){display(state);void syncNow();}
-  }catch(e){if(ticket===epoch)statusTextSync('Importação não concluída: '+e.message,'err');}
+    if(ticket===epoch){display(state);$('syncRecoverResult').textContent='Importação local concluída. Acompanhe o envio pelo status de sincronização.';void syncNow();}
+  }catch(e){if(ticket===epoch){$('syncRecoverResult').textContent='Importação não concluída: '+e.message;statusTextSync('Importação não concluída: '+e.message,'err');}}
   finally{$('syncRecoverPassword').value='';}
 }
 window.addEventListener('online',()=>syncNow(true));
 window.addEventListener('storage',event=>{if(event.key===SIGNED_OUT&&event.newValue==='1')void activate(null);});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncNow(true);});
 setInterval(()=>syncNow(),15000);
-window.addEventListener('DOMContentLoaded',()=>{ $('appVersion').textContent='V1.15 · desenvolvimento';refreshSyncUI();void initCloud(); });
+window.addEventListener('DOMContentLoaded',()=>{ $('appVersion').textContent='V1.15 · teste de atualização 2';refreshSyncUI();void initCloud(); });

@@ -38,6 +38,9 @@ const server=http.createServer(async(req,res)=>{
  const browser=await chromium.launch({headless:true,...(process.env.BROWSER_PATH?{executablePath:process.env.BROWSER_PATH}:{})});
  try{
  const context=await browser.newContext(),page=await context.newPage(),errors=[];
+ const watchdog=setTimeout(()=>{console.error('Browser test exceeded 240 seconds');void browser.close();},240000);watchdog.unref();
+ page.setDefaultTimeout(20000);
+ console.log('Browser launched');
  const until=async fn=>{for(let i=0;i<450;i++){if(await page.evaluate(fn))return;await new Promise(r=>setTimeout(r,100));}throw Error('Async condition timed out: '+await page.locator('#syncMsg').textContent());};
  page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
  const url='http://127.0.0.1:'+server.address().port;
@@ -46,12 +49,16 @@ const server=http.createServer(async(req,res)=>{
  await page.locator('#syncEmail').fill('alice@test');await page.locator('#syncPassword').fill('secret123');
  await page.getByRole('button',{name:'Entrar',exact:true}).click();
  await page.waitForFunction(()=>unlocked);
- await page.evaluate(()=>navigator.serviceWorker.ready);
+ console.log('Login completed; waiting for service worker');
+ await page.waitForFunction(()=>!!navigator.serviceWorker.controller, null, {timeout:20000});
+ console.log('Service worker ready');
  // Initial controller claim must not interrupt the onboarding form.
  await page.waitForFunction(()=>unlocked&&navigator.serviceWorker.controller);
  await context.setOffline(true);
  await page.evaluate(async()=>{data.push(stampRecord({id:'a',descricao:'Offline',tipo:'entrada',controle:'pessoal',categoria:'Outros',valor:12,data:'2026-09-11',vencimento:'2026-09-11',status:'pago'}));await save();});
+ console.log('Reloading offline');
  await page.reload();await page.waitForFunction(()=>unlocked);
+ console.log('Reloaded');
  assert.equal(await page.evaluate(()=>data[0].descricao),'Offline');
  assert.equal(await page.evaluate(async()=>Object.keys((await FinanceStore.read('alice@test')).pending).length),1);
  await context.setOffline(false);await page.evaluate(()=>syncNow());
@@ -91,12 +98,45 @@ const server=http.createServer(async(req,res)=>{
  await page.locator('#editForm button[type="submit"]').click();
  await until(()=>data[0].valor===26.5);
  await page.locator('#tbody .btn-delete').click();await until(()=>data[0].deleted===true);
+ console.log('Reloading offline');
  await page.reload();await page.waitForFunction(()=>unlocked);
+ console.log('Reloaded');
  assert.equal(await page.evaluate(()=>activeData().length),0);
  assert.equal(await page.evaluate(async()=>Object.keys((await FinanceStore.read('bob@test')).pending).length),1);
  await context.setOffline(false);await until(async()=>Object.keys((await FinanceStore.read('bob@test')).pending).length===0);
  assert.equal([...remote.get('bob@test').values()][0].deleted,true);
+ // Import an encrypted fictitious vault through the real UI in this isolated context.
+ console.log('Starting vault test');
+ const vault=await page.evaluate(async()=>{
+   const raw=JSON.stringify(await encryptData('Cofre-Ficticio-2026!',[{id:'legacy_ui_test',descricao:'TESTE MIGRACAO COFRE - ficticio',valor:12.34,categoria:'Outros',data:'2026-09-12',tipo:'entrada',controle:'pessoal',status:'pago'}]));
+   if(localStorage.getItem(SECURE_KEY)||localStorage.getItem(LEGACY_KEY))throw Error('Unexpected existing legacy vault');
+   localStorage.setItem(SECURE_KEY,raw);return raw;
+ });
+ await page.getByRole('button',{name:'☁️ Sincronizar',exact:true}).click();
+ await page.locator('#syncRecoverPassword').fill('senha-incorreta');
+ await page.getByRole('button',{name:'Importar cofre antigo deste dispositivo',exact:true}).click();
+ await page.waitForFunction(()=>document.getElementById('syncMsg').textContent.includes('Importação não concluída'));
+ assert.equal(await page.evaluate(()=>data.some(x=>x.id==='legacy_ui_test')),false);
+ await context.setOffline(true);
+ await page.locator('#syncRecoverPassword').fill('Cofre-Ficticio-2026!');
+ await page.getByRole('button',{name:'Importar cofre antigo deste dispositivo',exact:true}).click();
+ await until(()=>data.some(x=>x.id==='legacy_ui_test'));
+ assert.equal(await page.evaluate(()=>localStorage.getItem(SECURE_KEY)),vault);
+ console.log('Reloading offline');
+ await page.reload();await page.waitForFunction(()=>unlocked);
+ console.log('Reloaded');
+ assert.equal(await page.evaluate(()=>data.find(x=>x.id==='legacy_ui_test').valor),12.34);
+ await context.setOffline(false);
+ await until(async()=>Object.keys((await FinanceStore.read('bob@test')).pending).length===0);
+ assert.equal(remote.get('bob@test').get('legacy_ui_test').valor,12.34);
+ await page.getByRole('button',{name:'☁️ Sincronizar',exact:true}).click();
+ await page.locator('#syncRecoverPassword').fill('Cofre-Ficticio-2026!');
+ await page.getByRole('button',{name:'Importar cofre antigo deste dispositivo',exact:true}).click();
+ await page.waitForFunction(()=>document.getElementById('syncRecoverPassword').value==='');
+ assert.equal(await page.evaluate(()=>data.filter(x=>x.id==='legacy_ui_test').length),1);
+ assert.equal(await page.evaluate(()=>localStorage.getItem(SECURE_KEY)),vault);
  assert.deepEqual(errors,[]);
+ console.log('PASS: legacy import UI rejects wrong password, persists offline, uploads on reconnect to mock server, reimports without duplicates, preserves original vault.');
  console.log('PASS: browser startup, IndexedDB offline reload, reconnect upload, conflict resolution, logout queue retention, account isolation, create/edit/delete forms, safe text rendering; '+calls+' mock sync requests.');
  await context.close();
  }finally{await browser.close();server.close();}
