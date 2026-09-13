@@ -76,3 +76,124 @@ test('the real vendored SDK cannot restore tokens after offline logout',async()=
  assert.equal((await h.run('__supabase.auth.getSession()')).data.session,null);
  assert.equal(h.storage.has('finance-auth-v2'),false);assert.equal(h.run('usableSession(null)'),null);assert.equal(remoteLogouts,0);
 });
+
+test('encrypted legacy import rejects wrong password, preserves vault, and reimports without duplication',async()=>{
+ const h=harness();
+ Object.assign(h.context,{TextEncoder,TextDecoder,Uint8Array,btoa,atob});
+ const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
+ h.run('const SECURE_KEY="controle_financeiro_secure_v1", LEGACY_KEY="controle_financeiro_v1";');
+ h.run(html.slice(html.indexOf('async function deriveKey('),html.indexOf('const cats=')));
+ h.context.fixture=[record('legacy_test_20260912',12.34)];
+ const raw=JSON.stringify(await h.run('encryptData("Cofre-Ficticio-2026!",fixture)'));
+ h.storage.set('controle_financeiro_secure_v1',raw);
+ await h.login('alice');h.context.navigator.onLine=false;
+ h.elements.get('syncRecoverPassword').value='senha-incorreta';
+ await h.run('importLegacy("local")');
+ assert.equal(h.accounts.has('alice'),false);
+ assert.match(h.elements.get('syncMsg').textContent,/Importação não concluída/);
+ assert.equal(h.storage.get('controle_financeiro_secure_v1'),raw);
+ h.elements.get('syncRecoverPassword').value='Cofre-Ficticio-2026!';
+ await h.run('importLegacy("local")');
+ assert.deepEqual(h.accounts.get('alice').records,h.context.fixture);
+ assert.equal(Object.keys(h.accounts.get('alice').pending).length,1);
+ const queued=JSON.stringify(h.accounts.get('alice'));
+ h.elements.get('syncRecoverPassword').value='Cofre-Ficticio-2026!';
+ await h.run('importLegacy("local")');
+ assert.equal(JSON.stringify(h.accounts.get('alice')),queued);
+ assert.equal(h.storage.get('controle_financeiro_secure_v1'),raw);
+ assert.equal(h.elements.get('syncRecoverPassword').value,'');
+ h.accounts.get('alice').records[0].valor=99;
+ const before=JSON.stringify(h.accounts.get('alice'));
+ h.elements.get('syncRecoverPassword').value='Cofre-Ficticio-2026!';
+ await h.run('importLegacy("local")');
+ assert.equal(JSON.stringify(h.accounts.get('alice')),before);
+ assert.match(h.elements.get('syncMsg').textContent,/mesmo ID/);
+});
+
+test('real SDK invalid refresh ends session without losing pending data; reauthentication sends it once',async()=>{
+ globalThis.self=globalThis;
+ const {createClient}=require('../vendor/supabase.js');
+ const h=harness();let rejectRefresh=false,uploads=0;
+ const uid='00000000-0000-4000-8000-000000000003';
+ h.context.SUPABASE_URL=h.context.window.SUPABASE_URL='https://test.invalid';
+ h.context.SUPABASE_PUBLISHABLE_KEY=h.context.window.SUPABASE_PUBLISHABLE_KEY='test';
+ h.context.window.supabase={createClient:(url,key,options)=>createClient(url,key,{
+  ...options,auth:{...options.auth,storage:h.context.localStorage,autoRefreshToken:false,detectSessionInUrl:false},
+  global:{fetch:async(url,options)=>{
+   if(String(url).includes('/rpc/')){
+    uploads++;const body=JSON.parse(options.body);
+    assert.equal(body.expected_user,uid);
+    return new Response(JSON.stringify({records:body.operations.map(x=>x.value),accepted:body.operations.map(x=>x.opId),conflicts:{}}),{status:200,headers:{'Content-Type':'application/json'}});
+   }
+   if(String(url).includes('grant_type=refresh_token')&&rejectRefresh)return new Response(JSON.stringify({code:'refresh_token_not_found',message:'Invalid Refresh Token: Refresh Token Not Found'}),{status:400,headers:{'Content-Type':'application/json'}});
+   assert.ok(String(url).includes('/token'));
+   return new Response(JSON.stringify({access_token:'test-access-token',refresh_token:'test-refresh-token',token_type:'bearer',expires_in:3600,user:{id:uid,email:'alice@test'}}),{status:200,headers:{'Content-Type':'application/json'}});
+  }}
+ })};
+ await h.run('initCloud()');
+ h.context.document.getElementById('syncEmail').value='alice@test';
+ h.context.document.getElementById('syncPassword').value='secret123';await h.run('syncLogin()');
+ h.context.navigator.onLine=false;
+ h.context.data.push(record('pending_expiration',7.89));await h.run('save()');
+ const pending=JSON.stringify(h.accounts.get(uid));
+ h.context.navigator.onLine=true;rejectRefresh=true;
+ const refresh=await h.run('__supabase.auth.refreshSession()');
+ assert.ok(refresh.error);
+ assert.equal(h.run('account'),null);assert.equal(h.context.unlocked,false);
+ assert.equal(h.context.data.length,0);assert.equal(JSON.stringify(h.accounts.get(uid)),pending);
+ assert.equal(uploads,0);
+ rejectRefresh=false;
+ h.context.document.getElementById('syncPassword').value='secret123';await h.run('syncLogin()');
+ await h.run('syncNow(true)');
+ assert.equal(h.run('account.id'),uid);
+ assert.equal(h.context.data[0].valor,7.89);
+ assert.equal(Object.keys(h.accounts.get(uid).pending).length,0);
+ assert.equal(uploads,1);
+});
+
+test('import result survives background sync and clears when switching accounts',async()=>{
+ const h=harness();await h.login('alice');
+ h.context.client={from(){return {select(){return {eq(){return {maybeSingle:async()=>({data:null,error:null})};}};}};},rpc(){return {abortSignal:async()=>({data:{records:[],accepted:[],conflicts:{}}})};}};
+ h.run('__supabase=client');
+ await h.run('importLegacy("cloud")');
+ const message=h.elements.get('syncRecoverResult').textContent;
+ assert.match(message,/Nenhum cofre antigo encontrado/);
+ await h.run('syncNow(true)');
+ assert.equal(h.elements.get('syncRecoverResult').textContent,message);
+ assert.equal(h.elements.get('syncMsg').textContent,'Sincronizado com a nuvem.');
+ await h.login('bob');assert.equal(h.elements.get('syncRecoverResult').textContent,'');
+});
+
+test('migration rehearsal preserves mixed records, tombstones, and independently specified totals',async()=>{
+ const h=harness();Object.assign(h.context,{TextEncoder,TextDecoder,Uint8Array,btoa,atob});
+ const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
+ h.run('const SECURE_KEY="controle_financeiro_secure_v1", LEGACY_KEY="controle_financeiro_v1";');
+ h.run(html.slice(html.indexOf('async function deriveKey('),html.indexOf('const cats=')));
+ const rows=[
+  {...record('salary',1250.50),categoria:'Salário'},
+  {...record('expense',200.25),tipo:'saida',categoria:'Compras'},
+  {...record('pending_in',80),status:'pendente',vencimento:'2026-10-01'},
+  {...record('pending_out',30),tipo:'saida',status:'pendente',vencimento:'2026-09-01'},
+  {...record('sales',300.10),controle:'restaurante',categoria:'Vendas'},
+  {...record('ingredients',40.05),controle:'restaurante',tipo:'saida',categoria:'Ingredientes'},
+  {...record('deleted_sale',999),deleted:true},
+  {...record('old_date',10),data:'2024-02-29',descricao:'Acentuação & <texto> preservados'}
+ ];
+ h.context.fixture=rows;
+ const original=JSON.stringify(await h.run('encryptData("Ensaio-Ficticio-2026!",fixture)'));
+ h.storage.set('controle_financeiro_secure_v1',original);await h.login('alice');h.context.navigator.onLine=false;
+ h.elements.get('syncRecoverPassword').value='Ensaio-Ficticio-2026!';await h.run('importLegacy("local")');
+ assert.deepEqual(h.accounts.get('alice').records,rows);
+ function totals(records){const out={pessoal:{paid:0,receivable:0,payable:0},restaurante:{paid:0,receivable:0,payable:0}};
+ for(const x of records){if(x.deleted)continue;const cents=Math.round(x.valor*100),a=out[x.controle];if(x.status==='pago')a.paid+=x.tipo==='entrada'?cents:-cents;else a[x.tipo==='entrada'?'receivable':'payable']+=cents;}return out;}
+ const expected={pessoal:{paid:106025,receivable:8000,payable:3000},restaurante:{paid:26005,receivable:0,payable:0}};
+ assert.deepEqual(totals(h.accounts.get('alice').records),expected);
+ let uploaded;
+ h.context.client={rpc(name,args){uploaded=Store.copy(args.operations);return {abortSignal:async()=>({data:{records:uploaded.map(x=>x.value),accepted:uploaded.map(x=>x.opId),conflicts:{}}})};}};
+ h.run('__supabase=client');h.context.navigator.onLine=true;await h.run('syncNow(true)');
+ assert.deepEqual(uploaded.map(x=>x.value),rows);assert.equal(Object.keys(h.accounts.get('alice').pending).length,0);
+ assert.deepEqual(totals(h.accounts.get('alice').records),expected);
+ h.elements.get('syncRecoverPassword').value='Ensaio-Ficticio-2026!';h.context.navigator.onLine=false;await h.run('importLegacy("local")');
+ assert.deepEqual(h.accounts.get('alice').records,rows);assert.equal(Object.keys(h.accounts.get('alice').pending).length,0);
+ assert.equal(h.storage.get('controle_financeiro_secure_v1'),original);
+});

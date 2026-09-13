@@ -8,5 +8,12 @@
   "background_color": "#f8f1e8",
   "theme_color": "#4a211d",
   "lang": "pt-BR",
-  "icons": [{"src":"logo.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]
+  "icons": [
+    {
+      "src": "logo.png",
+      "sizes": "1280x1280",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
 }
