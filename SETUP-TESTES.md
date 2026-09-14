@@ -1,8 +1,8 @@
-# Preparar o Supabase de testes
+# Preparar o Supabase de testes — guia histórico
 
-A produção não precisa ser alterada para esta etapa. Use um projeto separado, com contas e lançamentos fictícios.
+Este documento descreve o ambiente separado de testes usado antes da publicação da V1.15. A produção já foi preparada e publicada; não use este roteiro para alterar o projeto de produção.
 
-**Estado atual:** o projeto de testes `lxsvcmsdxcwiwyzexyyc` já está configurado em `config.js`. A tabela e a função foram detectadas, com acesso anônimo negado. Para testar no computador, abra a prévia abaixo e use uma conta de teste com e-mail confirmado. Os passos de criação abaixo ficam como referência; não é necessário criar outro projeto ou executar novamente o SQL apenas por causa deste guia.
+**Estado histórico:** o projeto de testes `lxsvcmsdxcwiwyzexyyc` foi usado para validar a candidata. A configuração publicada aponta para o projeto de produção; para repetir estes testes, use uma cópia ou o repositório de testes e contas fictícias.
 
 1. Entre no [painel do Supabase](https://supabase.com/dashboard), escolha **New project / Novo projeto** e crie um projeto chamado, por exemplo, `meu-controle-financeiro-testes`. Guarde a senha do banco no seu gerenciador de senhas; ela não precisa ser enviada nesta conversa.
 2. No projeto novo, abra o **SQL Editor**, crie uma consulta e execute o conteúdo de [`supabase/migrations/202609120001_account_sync.sql`](supabase/migrations/202609120001_account_sync.sql). Isso cria a nova tabela, a função de sincronização e as regras de acesso. O SQL é para um projeto novo; não execute no projeto atual de produção.

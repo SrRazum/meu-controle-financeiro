@@ -1,10 +1,12 @@
-# Meu Controle Financeiro — V1.15 em desenvolvimento
+# Meu Controle Financeiro — V1.15 em produção
 
-Esta branch parte da v1.14 promovida (`da479659`) e implementa inicialização por conta e fila offline. **Não está pronta para produção.** O projeto Supabase de testes `lxsvcmsdxcwiwyzexyyc` está configurado. Leia [a revisão, migração e testes pendentes](REVIEW-V1.15.md).
+Esta versão implementa inicialização por conta, persistência offline por usuário e sincronização automática em segundo plano. A V1.15 foi validada em computador e Android, publicada em `v1.13-producao` e está disponível em [srrazum.github.io/meu-controle-financeiro](https://srrazum.github.io/meu-controle-financeiro/).
 
-Para continuar: [criar e configurar o ambiente de testes](SETUP-TESTES.md). Prévia local: `npm run dev`. Testes: `npm install`, `npm test` e `npm run test:browser`.
+O projeto Supabase de produção contém `finance_records_v2`, `finance_sync_v2`, RLS e políticas por usuário. A branch de testes e o roteiro histórico permanecem documentados separadamente em [SETUP-TESTES.md](SETUP-TESTES.md).
 
-O texto abaixo é a documentação histórica da V1.13, preservada como referência. As garantias de criptografia e testes da versão antiga não se aplicam automaticamente à V1.15.
+Prévia local: `node scripts/preview.cjs` (ou `npm run dev`). Testes automatizados: `npm install`, `npm test` e `npm run test:browser`.
+
+O texto abaixo é a documentação histórica das versões anteriores, preservada como referência. As garantias específicas da V1.13 não substituem as regras de segurança e os limites documentados para a V1.15.
 
 ## Documentação histórica — V1.13
 

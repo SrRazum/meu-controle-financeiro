@@ -1,6 +1,6 @@
-# V1.15 — inicialização por conta, em desenvolvimento
+# V1.15 — inicialização por conta, publicada
 
-Base verificada: `v1.13-producao` e `v1.14-cadastro-conta-revisao` apontavam para `da479659369a6c11e46b4daeafe184681a05b891`. Branch de trabalho: `dev/v1.15-account-offline-sync`. Nenhum deploy nem alteração no banco de produção foi executado.
+Estado atual: a V1.15 foi validada, o SQL foi aplicado ao projeto Supabase de produção `prrgajnjkknstsaokgwy` e a versão foi publicada em `main` e `v1.13-producao` no commit `f958d730a4826da8ddeb3a93e5a69188c2abe876`. O site público é [srrazum.github.io/meu-controle-financeiro](https://srrazum.github.io/meu-controle-financeiro/). Os parágrafos de preparação e pendências abaixo preservam o histórico do desenvolvimento.
 
 ## Achados da revisão
 
@@ -19,7 +19,7 @@ Base verificada: `v1.13-producao` e `v1.14-cadastro-conta-revisao` apontavam par
 | `sync-store.js` | IndexedDB por UID; registros e fila persistidos na mesma transação; alterações sucessivas coalescidas sem perder a base original; confirmação de envio por ID de operação; proteção contra gravação de aba desatualizada. |
 | `supabase/migrations/202609120001_account_sync.sql` | Nova tabela `finance_records_v2`, RLS de leitura por `auth.uid()`, escrita somente pela função `finance_sync_v2`. Função valida o UID esperado, serializa requisições da conta, compara base/valor atual atomicamente e retorna conflitos sem sobrescrever. Não modifica `finance_vault`. |
 | `index.html` | Retira criação de senha e bloqueio por inatividade; mantém somente funções criptográficas para ler dados antigos; carrega autenticação explicitamente; indica pendências; escapa textos inseridos no HTML; impede salvar formulário aberto antes de uma atualização concorrente. |
-| `config.js` | Remove interceptadores de conta e exclusões locais. Preserva filtro de relatórios. Configurado com URL/chave pública do projeto de TESTES `lxsvcmsdxcwiwyzexyyc`, fornecidas pelo usuário. |
+| `config.js` | Remove interceptadores de conta e exclusões locais. Preserva filtro de relatórios. A versão publicada aponta para o projeto Supabase de produção; a configuração de testes fica na branch/repositório de testes. |
 | `sw.js` | Cache completo da versão, inclusive cliente Supabase; HTML e scripts da mesma versão; atualização aguarda ação do usuário; nomes de cache por escopo. Não acessa tokens nem envia registros. |
 | `about.js` | Remove carregamento indireto de autenticação e atualiza descrição da versão/proteção. |
 | `vendor/` | Supabase JS 2.57.4 UMD fixado localmente, com licença MIT. SHA-256 do download: `7e94b62086deecef8c0ba3b38f514e2a1944ff6c81d92fb3ff967828c406c38f`. |
@@ -70,7 +70,7 @@ Executado:
 
 As verificações adicionais levaram a correções na validação de registros/datas/valores no servidor e na fila, no isolamento de uma resposta tardia após falha de gravação e no logout offline. A implementação fixada do Supabase retornava antes de limpar os tokens quando o logout remoto falhava; agora a aplicação garante a limpeza local, mantém um marcador de sessão encerrada e avisa quando não consegue confirmar a saída no servidor. Uma saída sem conexão não garante revogar a sessão no servidor. Também foi corrigido um aviso antigo no formulário que ainda prometia criptografia e bloqueio automático.
 
-**Ainda não validado para produção:**
+**Pendências históricas encerradas antes da publicação:**
 
 - Aplicação do SQL no Supabase remoto e validação das permissões efetivas via API. Concorrência entre conexões independentes ainda exige teste: PGlite usa um único backend, portanto não comprova a concorrência real do serviço.
 - Cadastro real, confirmação de e-mail, senha incorreta, expiração/renovação de sessão e retorno offline com token expirado. O teste do SDK também usa transporte simulado.
@@ -81,4 +81,4 @@ As verificações adicionais levaram a correções na validação de registros/d
 - Regressão funcional completa de entradas/saídas, edição, exclusão, pagamentos, recorrências, filtros, relatórios e datas locais.
 - Revisão da versão vendorizada do Supabase e seus avisos de segurança antes de publicar.
 
-Nenhuma dessas pendências deve ser interpretada como teste concluído. Não promover esta branch até validar o ambiente e o plano de migração.
+Esses itens foram tratados com a validação real em computador, Android, Supabase local e projeto de produção. Permanecem como limitações operacionais: a fila offline não é backup externo, a criptografia ponta a ponta não está implementada e Safari/iOS não foi validado.
