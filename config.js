@@ -1,7 +1,7 @@
 // Configuração do Supabase para o Meu Controle Financeiro.
-// V1.15 desenvolvimento — projeto Supabase isolado de TESTES.
-window.SUPABASE_URL = "https://lxsvcmsdxcwiwyzexyyc.supabase.co";
-window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_veiVnXHTgGGl7QJDQhmoMA_4s7J3He0";
+// V1.15 candidata de produção — projeto Supabase de produção.
+window.SUPABASE_URL = "https://prrgajnjkknstsaokgwy.supabase.co";
+window.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_8baHLkc8XLw8x0TDHBXe6Q_yZf6Std9";
 
 (function () {
 
