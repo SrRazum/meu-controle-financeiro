@@ -8,6 +8,20 @@ function clearLocalSession(){
 let signingOut=false;
 let retryAt=0, failures=0;
 let syncRequested=false;
+function confirmationRedirectUrl(){
+  const url=new URL(window.location.href);
+  url.search='?confirmed=1';
+  url.hash='';
+  return url.toString();
+}
+function consumeConfirmationNotice(){
+  const url=new URL(window.location.href);
+  if(url.searchParams.get('confirmed')!=='1')return false;
+  url.searchParams.delete('confirmed');
+  const clean=url.pathname+(url.search?('?'+url.searchParams.toString()):'')+url.hash;
+  window.history.replaceState({},document.title,clean);
+  return true;
+}
 function usableSession(session){
   if(signingOut||localStorage.getItem(SIGNED_OUT)==='1')return null;
   if(session?.user){localStorage.setItem(LAST_ACCOUNT,JSON.stringify(session.user));return session;}
@@ -89,11 +103,14 @@ async function authenticate(signup){
   if(!email||password.length<6){statusTextSync('Informe e-mail e senha de pelo menos 6 caracteres.','err');return;}
   try{
     localStorage.removeItem(SIGNED_OUT);
-    const {data:result,error}=await __supabase.auth[signup?'signUp':'signInWithPassword']({email,password});
+    const payload=signup
+      ? {email,password,options:{emailRedirectTo:confirmationRedirectUrl()}}
+      : {email,password};
+    const {data:result,error}=await __supabase.auth[signup?'signUp':'signInWithPassword'](payload);
     if(error)throw error;
     $('syncPassword').value='';
     if(result.session)await activate(result.session);
-    else statusTextSync('Verifique seu e-mail para confirmar a conta. Se já possui conta, use Entrar.','');
+    else statusTextSync('Conta criada. Verifique seu e-mail; o link abrirá este aplicativo para você entrar.','');
   }catch(e){statusTextSync('Não foi possível entrar/criar a conta. Verifique os dados e a conexão.','err');}
 }
 function syncLogin(){return authenticate(false);}
@@ -198,7 +215,13 @@ window.addEventListener('online',()=>syncNow(true));
 window.addEventListener('storage',event=>{if(event.key===SIGNED_OUT&&event.newValue==='1')void activate(null);});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')void syncNow(true);});
 setInterval(()=>syncNow(),15000);
-window.addEventListener('DOMContentLoaded',()=>{ $('appVersion').textContent='V1.15 · restauração segura';refreshSyncUI();void initCloud(); });
+window.addEventListener('DOMContentLoaded',()=>{
+  $('appVersion').textContent='V1.15 · restauração segura';refreshSyncUI();
+  const confirmed=consumeConfirmationNotice();
+  void initCloud().then(()=>{
+    if(confirmed)statusTextSync(account?'Conta confirmada. Você já pode usar o aplicativo.':'Conta confirmada. Abra Sincronizar e toque em Entrar.','ok');
+  });
+});
 
 let backupBusy=false;
 async function accountBackup(restore=false){
