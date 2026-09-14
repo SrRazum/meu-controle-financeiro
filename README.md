@@ -6,6 +6,8 @@ O projeto Supabase de produção contém `finance_records_v2`, `finance_sync_v2`
 
 Prévia local: `node scripts/preview.cjs` (ou `npm run dev`). Testes automatizados: `npm install`, `npm test` e `npm run test:browser`.
 
+Para instalar o aplicativo no iPhone, consulte [GUIA-INSTALACAO-IPHONE.md](GUIA-INSTALACAO-IPHONE.md).
+
 O texto abaixo é a documentação histórica das versões anteriores, preservada como referência. As garantias específicas da V1.13 não substituem as regras de segurança e os limites documentados para a V1.15.
 
 ## Documentação histórica — V1.13
